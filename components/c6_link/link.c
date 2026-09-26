@@ -212,7 +212,32 @@ static size_t v2_to_sf(const proto_frame_t *vf, sf_frame_t *sf)
             v = proto_get_u16(&vf->data[0]);
             w = proto_get_u16(&vf->data[2]);
         }
+#if CONFIG_C6_BENCH_CTRL
+        /* bench: the TC275 build refuses op 0x50 (kinematics not landed yet;
+         * myCar link_dispatch counts cmdUnsupportedOp and drops it). Translate
+         * to SET_SPEED {left,right} percent - the one drive op CPU0 already
+         * executes. Arcade mix: 600 mm/s ~= 100 %, 300 deg/s ~= 100 % diff,
+         * omega > 0 = CCW (left turn) => right wheel faster. The same formula
+         * is the one planned for myCar link_dispatch when 0x50 lands there. */
+        if (vf->cmd == PROTO_CMD_DRIVE)
+        {
+            int32_t lPct, rPct;
+
+            lPct = ((int16_t)v / 6) - ((int16_t)w / 3);
+            rPct = ((int16_t)v / 6) + ((int16_t)w / 3);
+            lPct = (lPct > 100) ? 100 : ((lPct < -100) ? -100 : lPct);
+            rPct = (rPct > 100) ? 100 : ((rPct < -100) ? -100 : rPct);
+            v = (uint16_t)(int16_t)lPct;
+            w = (uint16_t)(int16_t)rPct;
+            sf->data[0] = PROTO_CMD_SET_SPEED;       /* op the TC275 knows   */
+        }
+        else
+        {
+            sf->data[0] = vf->cmd;                   /* op = v2 command      */
+        }
+#else
         sf->data[0] = vf->cmd;                       /* op = v2 command      */
+#endif
         sf->type = SF_TYPE_CMD;
         sf->cid  = SF_CID_DRV;
         sf->len  = 5u;

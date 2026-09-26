@@ -82,3 +82,5 @@ Desktop.ini
 
 # Codegraph 索引缓存
 .codegraph/
+
+.cache

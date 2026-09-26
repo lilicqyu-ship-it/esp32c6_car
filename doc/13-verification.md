@@ -86,6 +86,7 @@ ESP32-C6 最低欠压阈值（SEL_7 = 2.51 V）以下，触发 brownout 复位�
 | `C6_BENCH_BOD_DISABLE` | n | app_main 最早处调用 `esp_brownout_disable()`（闪写/RF 校准脱离保证电压窗口，仅台架） |
 | `C6_NET_START_DELAY_MS` | 0 | Wi-Fi 启动前延时，让电源从开机浪涌恢复（台架取 300） |
 | `C6_WIFI_TX_POWER_QDBM` | 0 | 封顶 TX 功率压低 PA 电流峰，0.25 dBm 单位（台架取 48 = 12 dBm） |
+| `C6_BENCH_CTRL` | n | 控制旁路（台架取 y）：①所有 WS 会话免配对直接提升 CTRL——myCar 尚无 PAIR 通道消费者，token 流程永远无法完成；②v2 0x50 DRIVE 在 `c6_link` 内翻译为 0x10 SET_SPEED `{left,right}%`（600 mm/s/300 deg/s ≙ ±100%，ω>0=左转）——myCar 旧构建对 0x50 计 `cmdUnsupportedOp` 丢弃；③bridge 在链路在线时每 60 ms 注入 0x21 HEARTBEAT——CPU0 100 ms 无心跳即清零轮速，而页面按 21 §6.2 依赖 0x50 兼作心跳。生产构建必须保持 n（myCar 落地 0x50 消费后此开关可退役） |
 
 注意：ESP32-C6 的欠压阈值阶梯是**降序**的（SEL_7 = 2.51 V 最低，
 SEL_2 = 3.27 V 最高），`sdkconfig.defaults` 中不要写 `..._SEL_2_5V`

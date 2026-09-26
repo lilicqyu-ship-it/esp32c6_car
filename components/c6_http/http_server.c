@@ -183,6 +183,13 @@ static esp_err_t ws_pre_handshake(httpd_req_t *req)
     {
         return ESP_FAIL;                          /* table full -> refuse upgrade */
     }
+#if CONFIG_C6_BENCH_CTRL
+    /* bench: the TC275 build has no PAIR consumer yet, so the token flow can
+     * never complete - grant CTRL directly (production keeps the gate) */
+    (void)token;
+    ws_sess_promote(fd, NULL);
+    ESP_LOGI(TAG, "ws fd=%d CTRL (bench bypass)", fd);
+#else
     if (get_request_token(req, token, sizeof(token)) && pair_token_ok(token))
     {
         uint8_t hash[16];
@@ -194,6 +201,7 @@ static esp_err_t ws_pre_handshake(httpd_req_t *req)
     {
         ESP_LOGI(TAG, "ws fd=%d spectator", fd);
     }
+#endif
     return ESP_OK;
 }
 

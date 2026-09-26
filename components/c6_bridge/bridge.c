@@ -684,6 +684,35 @@ static void pump_link_event(const link_event_t *ev)
     }
 }
 
+/* ---- bench heartbeat ---------------------------------------------------------*/
+#if CONFIG_C6_BENCH_CTRL
+/* CPU0 auto-stops when no HEARTBEAT arrives within 100 ms, and the page never
+ * sends 0x21 (doc 6.2 has DRIVE double as the heartbeat - but the bench TC275
+ * build refuses 0x50 before it could reach CPU0).  Inject 0x21 every 3rd tick
+ * (60 ms) while the link is up; production (real DRIVE heartbeat) keeps this
+ * off. */
+static void bench_heartbeat_tick(void)
+{
+    static uint8_t div = 0u;
+    proto_frame_t f;
+
+    if (!link_is_up())
+    {
+        return;
+    }
+    if (++div < 3u)
+    {
+        return;
+    }
+    div = 0u;
+    f.ver = PROTO_VER;
+    f.cmd = PROTO_CMD_HEARTBEAT;
+    f.seq = 0u;
+    f.len = 0u;
+    (void)link_send(&f);
+}
+#endif
+
 /* ---- bridge task -----------------------------------------------------------------------*/
 
 static void bridge_task(void *arg)
@@ -749,6 +778,9 @@ static void bridge_task(void *arg)
             relay_tick();
             bridge_reconcile_link_state();   /* self-heal "car online" (boot race) */
             bridge_send_link_state();   /* retry edges dropped earlier by BUSY */
+#if CONFIG_C6_BENCH_CTRL
+            bench_heartbeat_tick();
+#endif
         }
         (void)esp_task_wdt_reset();
     }

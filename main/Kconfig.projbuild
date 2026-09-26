@@ -28,6 +28,19 @@ menu "c6_car project"
             run outside the guaranteed voltage window - bench bring-up only,
             NEVER for production builds, and fix the supply first if possible.
 
+    config C6_BENCH_CTRL
+        bool "BENCH ONLY: control bypass (no pairing, DRIVE->SET_SPEED, C6 heartbeat)"
+        default n
+        help
+            Bench bring-up shortcut while the TC275 build still refuses 0x50
+            DRIVE and the PAIR channel (myCar link_dispatch whitelist).  With
+            this on:  every WS session is promoted to CTRL without a token;
+            v2 DRIVE (0x50 v,omega) is translated on the C6 into SET_SPEED
+            (0x10 left,right percent), the one op CPU0 already executes; and
+            the bridge injects a 0x21 HEARTBEAT every 60 ms so CPU0's 100 ms
+            heartbeat watchdog stays fed.  MUST be disabled (n) for production
+            builds - it removes the pairing gate and changes the wire op.
+
     config C6_NET_START_DELAY_MS
         int "Delay before Wi-Fi start (voltage settling, ms)"
         default 0
