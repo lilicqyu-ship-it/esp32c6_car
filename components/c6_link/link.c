@@ -58,6 +58,20 @@ static const char *TAG = "c6_link";
 #define LINK_WATCHDOG_MS      500u                   /* 22 §5.4             */
 #define LINK_LOST_CRC_RUN     5u                     /* 5 CRC fails -> lost */
 
+/* Consecutive out-of-window SEQ rejects before the RX window is dropped and
+ * the next frame re-locks. Both ends keep their own per-direction counter, so
+ * whenever either board restarts, its counter leaves the peer's window for
+ * good; without this the receiver silently drops up to 224 frames (about 7 s
+ * of dead control at the 30 Hz drive rate) until the counters wrap back into
+ * the window. */
+#define LINK_SEQ_RELOCK_RUN   8u
+
+/* An in-flight TX segment not completed by the master within this time re-arms
+ * the TX path: the master owns RDDMA, so a master that went away mid-read (or
+ * a lost completion event) would otherwise keep TX_PENDING set forever and
+ * nothing new would ever be queued. */
+#define LINK_TX_STALL_MS      2000u
+
 typedef struct
 {
     sf_frame_t f;
@@ -78,6 +92,8 @@ typedef struct
     uint8_t  txBuf[LINK_SEG_SIZE];
     spi_slave_hd_data_t txTrans;
     bool     tx_in_flight;
+    uint32_t tx_queued_ms;                           /* stall watchdog       */
+    bool     rx_requeue_pending[LINK_RX_BUFFERS];    /* queue_trans failed   */
 
     /* shared-register block (28 bytes, published via write_buffer) */
     uint8_t  regs[SF_REG_COUNT];
@@ -103,6 +119,7 @@ typedef struct
      * sent = a queued TX DMA seg went out, recv = a queued RX DMA seg filled. */
     volatile uint32_t isr_buftx, isr_bufrx, isr_sent, isr_recv;
     uint8_t  seq_tx, seq_rx_last;                    /* per-direction SEQ   */
+    uint32_t seq_rej_run;                            /* consecutive rejects */
     bool     seq_synced;                             /* false until the first
                                                        master frame locks the
                                                        window (myCar's parser
@@ -417,6 +434,7 @@ static void link_tx_kick(void)
                                  &s_link.txTrans, 0) == ESP_OK)
     {
         s_link.tx_in_flight = true;
+        s_link.tx_queued_ms = (uint32_t)(esp_timer_get_time() / 1000);
         regs_set_u32(SF_REG_TX_PENDING, (uint32_t)used);
         regs_publish();
         if (!s_link.silent)
@@ -462,8 +480,19 @@ static void link_handle_rx_segment(const uint8_t *data, size_t len)
                     regs_set_u32(SF_REG_ERRSTAT,
                                  regs_get_u32(SF_REG_ERRSTAT) | SF_ERR_SEQ);
                     regs_publish();
+                    s_link.seq_rej_run++;
+                    if (s_link.seq_rej_run >= LINK_SEQ_RELOCK_RUN)
+                    {
+                        /* A run of rejects means the master restarted and its
+                         * counter left our window for good: drop the window
+                         * and re-lock on the next frame instead of rejecting
+                         * until the counters wrap back in. */
+                        s_link.seq_synced  = false;
+                        s_link.seq_rej_run = 0u;
+                    }
                     break;
                 }
+                s_link.seq_rej_run = 0u;
                 if (sf_to_v2(&sf, &vf))
                 {
                     s_link.health.frames_rx++;
@@ -514,7 +543,9 @@ static void link_handle_rx_segment(const uint8_t *data, size_t len)
     }
 }
 
-/* re-queue one RX DMA buffer; RX_ROOM = queued capacity */
+/* re-queue one RX DMA buffer; RX_ROOM = queued capacity. A failed queue_trans
+ * must not silently shrink RX capacity forever: the slot is flagged and the
+ * task retries it every loop until it is back in the driver's queue. */
 static void link_rx_requeue(int slot)
 {
     memset(&s_link.rxTrans[slot], 0, sizeof(s_link.rxTrans[slot]));
@@ -525,8 +556,13 @@ static void link_rx_requeue(int slot)
     if (spi_slave_hd_queue_trans(LINK_SPI_HOST, SPI_SLAVE_CHAN_RX,
                                  &s_link.rxTrans[slot], 0) == ESP_OK)
     {
+        s_link.rx_requeue_pending[slot] = false;
         regs_set_u32(SF_REG_RX_ROOM, regs_get_u32(SF_REG_RX_ROOM) + LINK_SEG_SIZE);
         regs_publish();
+    }
+    else
+    {
+        s_link.rx_requeue_pending[slot] = true;
     }
 }
 
@@ -673,7 +709,15 @@ static void link_task(void *arg)
             link_handle_gen();
         }
 
-        if (L->tx_done_notif)
+        for (int i = 0; i < (int)LINK_RX_BUFFERS; i++)
+        {
+            if (L->rx_requeue_pending[i])
+            {
+                link_rx_requeue(i);                  /* failed earlier: retry */
+            }
+        }
+
+        while (L->tx_done_notif)
         {
             L->tx_done_notif = false;
             if (spi_slave_hd_get_trans_res(LINK_SPI_HOST, SPI_SLAVE_CHAN_TX,
@@ -687,6 +731,19 @@ static void link_task(void *arg)
                     irq_set(false);
                 }
             }
+        }
+
+        uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+
+        if (L->tx_in_flight && ((now - L->tx_queued_ms) > LINK_TX_STALL_MS))
+        {
+            /* The master owns RDDMA: one that went away mid-read (or a lost
+             * completion event) would leave TX_PENDING set forever and starve
+             * the TX path. Re-arm - a segment that really is still queued
+             * completes on the master's next read and the drain above clears
+             * the flag again. */
+            L->tx_in_flight = false;
+            ESP_LOGW(TAG, "TX stalled, re-armed");
         }
 
         while (L->rx_done_notif &&
@@ -720,7 +777,6 @@ static void link_task(void *arg)
         link_tx_kick();
 
         /* health watchdog (500 ms, 22 §5.4) */
-        uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
         if (L->up_reported &&
             ((now - L->health.last_rx_ms) > LINK_WATCHDOG_MS))
         {
