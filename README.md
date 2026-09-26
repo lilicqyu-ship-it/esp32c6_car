@@ -62,12 +62,18 @@ idf.py -p PORT flash monitor
 按目标分四种，均走 USB 串口（板载自动下载电路，**无需按 BOOT 键**，烧完自动复位运行）。
 
 > **捷径**：不想激活 IDF 环境时，在普通 CMD / 资源管理器里直接运行项目根目录的
-> `flash.bat`（bat 版）或 `python flash.py`（Python 版，EIM 元数据自动发现
-> 环境，不依赖 PowerShell）。三种模式：`full`（默认，全量四件套）、
-> `assets`（仅重打包并烧控制页，固件不动）、`all`
-> （先 assets 后固件一次到位）。可选第二参数指定端口（默认 COM14），
-> `flash.py all COM14 mon` 烧完顺便看日志。`idf.py` 只有在已激活环境的
-> PowerShell 里才可用。
+> `flash.bat`（bat 版）或 `python flash.py`（click 命令行版，EIM 元数据自动
+> 发现环境、缺 click 时自动切到 IDF venv 的 Python）。子命令：
+>
+> ```
+> python flash.py               # full（默认）：全量四件套
+> python flash.py assets        # 仅重打包并烧控制页，固件不动
+> python flash.py all -m        # 先 assets 后固件，-m 烧完开串口监视
+> python flash.py mon           # 仅串口监视
+> ```
+>
+> 各命令均支持 `-p COM7` 指定端口（默认 COM14）。`idf.py` 只有在已激活
+> 环境的 PowerShell 里才可用。
 
 ```powershell
 # ① 全量烧录（新板 / 首次 / 分区表改动后）：引导 + 分区表 + otadata + 固件

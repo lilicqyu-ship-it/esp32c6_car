@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
-"""ESP32-C6 flashing helper - pure-Python twin of flash.bat (no PowerShell).
+"""ESP32-C6 flashing helper - click CLI, pure-Python twin of flash.bat.
 
-Runs under any Python 3.8+; the heavy lifting (esptool / parttool / packing)
-is delegated to the ESP-IDF venv discovered from the EIM install metadata.
-
-Usage:  python flash.py [mode] [COM port] [mon]
-  mode   full (default) = bootloader + partition table + otadata + firmware
-         assets         = control page only (repacks assets_src, firmware untouched)
-         all            = assets first, then full firmware
-  COM    default COM14 (e.g. python flash.py COM7)
-  mon    open the serial monitor after flashing
+Commands:
+  full    bootloader + partition table + otadata + firmware (default)
+  assets  control page only (repacks assets_src, firmware untouched)
+  all     assets first, then full firmware
+  mon     serial monitor only (Ctrl+C to exit)
 
 Examples:
-  python flash.py                # full flash to COM14
-  python flash.py assets         # repack + flash control page only
-  python flash.py all COM14 mon  # both, then monitor
+  python flash.py                 # same as: full
+  python flash.py all -p COM7 -m  # both images, port COM7, monitor after
+  python flash.py assets          # repack + flash control page only
+
+Runs under any Python 3.8+; if `click` is missing the script relaunches
+itself under the ESP-IDF venv interpreter (discovered from EIM metadata),
+which always has click (idf.py depends on it).
 """
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -38,8 +39,6 @@ def find_idf_env():
             return Path(inst["python"]), Path(inst["path"])
         except (json.JSONDecodeError, KeyError, IndexError, TypeError):
             pass
-    import os
-
     venv = os.environ.get("IDF_PYTHON_ENV_PATH")
     idf = os.environ.get("IDF_PATH")
     if venv and idf:
@@ -50,13 +49,26 @@ def find_idf_env():
     )
 
 
+try:
+    import click
+except ImportError:
+    if os.environ.get("C6_FLASH_REEXEC") != "1":
+        py, _ = find_idf_env()
+        if py.exists():
+            print(f"[c6] click missing - relaunching under IDF venv: {py}")
+            env = dict(os.environ, C6_FLASH_REEXEC="1")
+            os.execve(str(py), [str(py), __file__, *sys.argv[1:]], env)
+    sys.exit("click is required: pip install click (or use the IDF venv python)")
+
+
 def run(cmd, **kw):
     print("[c6]", " ".join(str(c) for c in cmd))
     return subprocess.run([str(c) for c in cmd], **kw)
 
 
-def flash_assets(py, idf, port):
+def flash_assets(port):
     """Repack assets_src/ and write the assets partition (parttool)."""
+    py, idf = find_idf_env()
     r = run([py, PROJECT / "tools" / "build_assets.py", "assets_src", BUILD / "assets.bin"],
             cwd=PROJECT)
     if r.returncode != 0:
@@ -68,12 +80,13 @@ def flash_assets(py, idf, port):
         sys.exit("parttool write failed")
 
 
-def flash_full(py, port):
+def flash_full(port):
     """Write the four flashing images exactly like `idf.py flash` does.
 
     build/flash_args carries the flash mode/freq/size line plus the
     offset/image pairs with build-relative paths, hence cwd=BUILD.
     """
+    py, _ = find_idf_env()
     if not (BUILD / "c6_car.bin").exists():
         sys.exit("build/c6_car.bin missing - run `idf.py build` (or `flash.bat full`) first")
     run([py, "-m", "esptool", "--chip", CHIP, "-p", port, "-b", BAUD,
@@ -81,8 +94,7 @@ def flash_full(py, port):
          "write-flash", "@flash_args"], cwd=BUILD)
 
 
-def monitor(port):
-    """Serial monitor fallback when running outside the IDF venv (Ctrl+C to exit)."""
+def do_monitor(port):
     try:
         import serial
     except ImportError:
@@ -101,34 +113,60 @@ def monitor(port):
             pass
 
 
-def parse_args(argv):
-    mode, port, mon = "full", DEFAULT_PORT, False
-    for a in argv:
-        if a.lower() in ("full", "assets", "all"):
-            mode = a.lower()
-        elif a.lower() == "mon":
-            mon = True
-        elif a.lower().startswith("com") or a.startswith("/dev/"):
-            port = a
-        else:
-            sys.exit(f"unknown argument: {a}\n{__doc__}")
-    return mode, port, mon
+def common_opts(f):
+    f = click.option("-p", "--port", default=DEFAULT_PORT, show_default=True,
+                     help="Serial port.")(f)
+    f = click.option("-m", "--monitor", is_flag=True,
+                     help="Open the serial monitor after flashing.")(f)
+    return f
 
 
-def main():
-    mode, port, mon = parse_args(sys.argv[1:])
-    py, idf = find_idf_env()
-    print(f"[c6] mode={mode} port={port}")
-    print(f"[c6] idf={idf}")
-    if not py.exists():
-        sys.exit(f"IDF venv python not found: {py}")
-    if mode in ("assets", "all"):
-        flash_assets(py, idf, port)
-    if mode in ("full", "all"):
-        flash_full(py, port)
-    if mon:
-        monitor(port)
+@click.group(invoke_without_command=True)
+@click.pass_context
+def cli(ctx):
+    """ESP32-C6 flashing helper (c6_car).  No BOOT button needed - the board
+    auto-resets into download mode and again after flashing."""
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(full)
+
+
+@cli.command()
+@common_opts
+def full(port, monitor):
+    """Flash bootloader + partition table + otadata + firmware."""
+    print(f"[c6] mode=full port={port}")
+    flash_full(port)
+    if monitor:
+        do_monitor(port)
+
+
+@cli.command()
+@common_opts
+def assets(port, monitor):
+    """Repack assets_src/ and flash the control page only (firmware untouched)."""
+    print(f"[c6] mode=assets port={port}")
+    flash_assets(port)
+    if monitor:
+        do_monitor(port)
+
+
+@cli.command(name="all")
+@common_opts
+def all_cmd(port, monitor):
+    """Flash assets first, then full firmware (one power cycle for the user)."""
+    print(f"[c6] mode=all port={port}")
+    flash_assets(port)
+    flash_full(port)
+    if monitor:
+        do_monitor(port)
+
+
+@cli.command()
+@click.argument("port", default=DEFAULT_PORT)
+def mon(port):
+    """Serial monitor only (115200, Ctrl+C to exit)."""
+    do_monitor(port)
 
 
 if __name__ == "__main__":
-    main()
+    cli()
