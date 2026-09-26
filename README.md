@@ -38,6 +38,55 @@ idf.py -p PORT flash monitor
   `sddev123456` 启动。**量产必须设为 n**（严格走 FACTORY_WAIT）。
 - 日志默认 WARN；台架可在 menuconfig 调高。
 
+## build 产物与分区（8 MB flash）
+
+`idf.py build` 产出（`build/`）：
+
+| 产物 | 内容 | 去向 |
+|---|---|---|
+| `bootloader/bootloader.bin` | 二级引导 | `0x0` |
+| `partition_table/partition-table.bin` | 分区表 | `0x8000` |
+| `ota_data_initial.bin` | OTA 槽位标记初始值（指向 ota_0） | `0x19000` |
+| `c6_car.bin` | **应用固件**（烧入 ota_0/ota_1 槽） | `0x20000`（ota_0） |
+| `assets.bin` | 控制页打包件（`tools/build_assets.py` 生成） | assets 分区 `0x620000` |
+| `c6_car.elf` / `c6_car.map` | 调试符号/链接映射（panic 解栈、addr2line 用），**不烧录** | — |
+| `*_flashed.bin` | 增量烧录差分缓存（esptool `--diff-with`），**勿手动烧** | — |
+
+分区布局（真源 `partitions.csv`，LLDD 2.1）：`ota_0`/`ota_1` 各 3 MB 双槽
+（A/B 升级+回滚），`assets` 512 KB 控制页，`coredump` 64 KB 崩溃转储，
+`factory_ota_cache` 1 MB TC275 固件中继缓存，`nvs/nvs_cert/nvs_keys` 出厂
+与配对数据（nvs_keys 加密）。
+
+## 烧录方法
+
+按目标分四种，均走 USB 串口（板载自动下载电路，**无需按 BOOT 键**，烧完自动复位运行）：
+
+```powershell
+# ① 全量烧录（新板 / 首次 / 分区表改动后）：引导 + 分区表 + otadata + 固件
+idf.py -p PORT erase-flash          # 可选：整片擦除（连带清 NVS 配对/宽限）
+idf.py -p PORT flash
+
+# ② 日常开发（改了固件代码）：同一命令，esptool 只写变化扇区，秒级
+idf.py -p PORT flash
+
+# ③ 仅更新控制页（改了 assets_src/，固件不动）
+python tools/build_assets.py assets_src build/assets.bin
+parttool.py -p PORT write_partition --partition-name=assets --input build/assets.bin
+
+# ④ OTA 槽位复位（升级卡死/回滚循环时）：重写 otadata 回到 ota_0
+parttool.py -p PORT write_partition --partition-name=otadata --input build/ota_data_initial.bin
+```
+
+免 IDF 环境（如产线治具）：任意 Python + esptool 直接按偏移烧四件套：
+
+```bash
+python -m esptool --chip esp32c6 -p PORT -b 460800 write-flash @build/flash_args
+```
+
+（`flash_args` 即 build 目录生成的偏移清单，与 `idf.py flash` 等价。）
+
+量产现场的固件更新走网页 OTA（`/ota/c6`，带 ed25519 验签与 A/B 回滚），见下节。
+
 ## 控制页 assets（可选，但建议）
 
 空 assets 分区时 `/` 回退固件内嵌极简页。正式页面：
