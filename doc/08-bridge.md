@@ -3,8 +3,8 @@
 | 项 | 内容 |
 |---|---|
 | 代码位置 | `components/c6_bridge/bridge.c`、`include/bridge.h` |
-| 上游需求 | LLDD §4.6（核心组件）、§2.3/§2.4（任务与数据流）、FR-2/FR-5/FR-6 |
-| 状态 | 🟩 **97%** — 信用窗时序待 HIL；首屏状态缓存未入 HELLO |
+| 上游需求 | LLDD §4.6（核心组件）、§2.3/§2.4（任务与数据流）、FR-2/FR-5/FR-6；链路段容器已换 SF 帧（[14-sf-link.md](14-sf-link.md)），bridge 对此无感知 |
+| 状态 | 🟩 **97%** — 信用窗时序待 HIL（22 §8）；首屏状态缓存未入 HELLO |
 
 ## 1. 职责
 
@@ -54,8 +54,9 @@
 
 ```
 POST /ota/tc275(httpd)
-  │ begin: LINK UP? → 初始化(窗口=8 信用, chunk=512B) → 0x60 BEGIN{total, crc=0*}
-  │ feed:  取信用(阻塞≤2s, 无信用=窗口耗尽→暂停读HTTP) → 组 0x61 CHUNK{idx,data}
+  │ begin: LINK UP? → 初始化(窗口=8 信用, chunk=240B) → 0x60 BEGIN{total, crc=0*}
+  │ feed:  按 ≤240B 子块切分（SF OTA_D/0x31 载荷上限，22 §5.5 T5），每子块取信用一次
+  │        (阻塞≤2s, 无信用=窗口耗尽→暂停读HTTP) → 组 0x61 CHUNK{idx,data}
   │        → link_send；副本存 in-flight 环(8 槽)供重发
   │ finish: 等 relay_acked == chunk_count（≤30s，期间 STATUS/SWAP 照常透传）
   ▼
@@ -63,6 +64,7 @@ bridge_task:
   0x62 ACK{idx,result} → relay_acked 前推 + 信用+1 + in-flight 出环 + resend 清零
                          全部 ACK → 0x63 STATUS{DONE,100}
   0x63 STATUS{state,pct} → 文本广播 otastatus（进度条）
+  0x53 DIAG 隧道（SF EVT/ACK，22 §5.5）→ 文本广播 evt
   0x64 SWAP_REQ          → 文本广播 otaswap + 泵复位（TC275 随即复位切槽）
   0x65/超时: ACK 静默 2s → in-flight 头部块重发 1 次；再超时 → 0x65 ABORT
              → 广播 otaerror + 泵复位
@@ -71,8 +73,9 @@ bridge_task:
 
 \* BEGIN 的 crc32 字段保留（整图 CRC 由 TC275 收全后自行计算，SDD §9.2）。
 
-堆安全：上传流不进 bridge 堆——块数据经 httpd 栈 → in-flight 静态环（4 KB），
-信用窗天然限制在途量，512 KB 堆不被吃穿（LLDD §4.6.3 设计动机）。
+堆安全：上传流不进 bridge 堆——块数据经 httpd 栈 → in-flight 静态环（8×66 B≈0.5 KB），
+信用窗天然限制在途量（8×240 B），512 KB 堆不被吃穿（LLDD §4.6.3 设计动机）。
+CHUNK 经 `link_send_ota_chunk()` 走 SF 快路径出线，bridge 不感知 SF 容器。
 
 ## 7. 接口（bridge.h 全量）
 
@@ -110,7 +113,7 @@ void      ota_relay_abort(int sd);
 | B-1 | 命令泵（≤1 ms 路径 + BUSY 回错） | ✅ | |
 | B-2 | 遥测邮箱 + 20 ms pacing 广播 | ✅ | |
 | B-3 | LINK_STATE 事件驱动聚合 | ✅ | |
-| B-4 | 中继信用窗口（8×512B） | 🟩 | 待 HIL 实测推进时序 |
+| B-4 | 中继信用窗口（8×240B chunk，SF 出线） | 🟩 | 待 HIL 实测推进时序（22 §8 G5 含 OTA 全流程） |
 | B-5 | ACK 超时重发→ABORT | 🟩 | 逻辑完成，断电注入待测 |
 | B-6 | 手机断开立即 ABORT | 🟩 | 本轮修复（sink.abort 经 http close/recv 错误触发） |
 | B-7 | state/faultCode 首屏缓存进 HELLO | 🔴 | 缓存已维护（car_state/fault_code），HELLO 未携带——页面靠 20 ms 遥测首帧兜底 |

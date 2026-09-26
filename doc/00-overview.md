@@ -4,7 +4,7 @@
 |---|---|
 | 文档版本 | V1.0 |
 | 日期 | 2026-09-26 |
-| 上游 | [esp32c6-fw-design.md](../../../myCar/doc/esp32c6-fw-design.md)（LLDD）→ [esp32c6-fw-coding-plan.md](../../../myCar/doc/esp32c6-fw-coding-plan.md)（编码计划，决策 C1–C10）→ 本目录（各模块详细设计 + 完成状态） |
+| 上游 | [21-software-design.md](../../myCar/doc/20-design/21-software-design.md)（量产 SDD，**设计基准**）→ [22-link-spi-design.md](../../myCar/doc/20-design/22-link-spi-design.md)（板间 SPI/SF 帧详细设计）→ [41-c6-docs-map.md](../../myCar/doc/40-esp32c6/41-c6-docs-map.md)（两仓库文档分工与跨仓 TODO）→ 本目录（各模块详细设计 + 完成状态） |
 | 代码基线 | `c6_car` 工作区（`idf.py build` 通过，`build/c6_car.bin` ≈ 1.05 MB） |
 
 ## 状态图例
@@ -21,10 +21,10 @@
 
 | 文档 | 模块 | 代码位置 | 需求追溯 | 完成度 | 验证状态 |
 |---|---|---|---|---|---|
-| [01](01-app-state.md) | 应用状态机与启动编排 | `main/app_main.c` `main/app_state.c` | LLDD §4.1/§4.10 | 🟡 85% | 🟩 编译通过，状态机未逐态联调 |
-| [02](02-proto.md) | proto v2 编解码 | `components/c6_proto/` | SDD §6 / LLDD §3.1 | ✅ 100% | ✅ 主机单测 12 项 + 10⁷ 模糊 |
+| [01](01-app-state.md) | 应用状态机与启动编排 | `main/app_main.c` `main/app_state.c` | LLDD §4.1/§4.10 | 🟡 90% | 🟩 编译通过；link_task TWDT 已补 |
+| [02](02-proto.md) | proto v2 编解码（手机/WS 侧） | `components/c6_proto/` | SDD V1.2 §6.1b / LLDD §3.1 | ✅ 100% | ✅ 主机单测 12 项 + 10⁷ 模糊 |
 | [03](03-factory.md) | 出厂数据（NVS） | `components/c6_factory/` | LLDD §4.8 | 🟡 90% | 🟩 编译通过；写入入口（DPT）未接 |
-| [04](04-link.md) | LINK 帧链路 | `components/c6_link/` | LLDD §4.5 / FR-3 | 🟡 90% | 🟩 编译通过；HIL 握手/降速待测 |
+| [04](04-link.md) | LINK 链路（**SPI 从机**） | `components/c6_link/` `components/c6_sf/` | myCar doc 22 / SDD V1.2 §6.1a / FR-3 | 🟩 代码完成 | 🟩 G1/G2 通过；波形兼容与台架门禁待测 |
 | [05](05-net.md) | 接入网 | `components/c6_net/` | LLDD §4.2 / FR-1 | 🟡 90% | 🟩 编译通过；Portal/mDNS 待真机确认 |
 | [06](06-pair.md) | 配对与会话 | `components/c6_pair/` | LLDD §4.4 / FR-4 | 🟩 100% | 🟩 编译通过，流程未联调 |
 | [07](07-http.md) | Web 服务 | `components/c6_http/` | LLDD §4.3 / §3.2 / FR-2 | 🟡 92% | 🟩 编译通过；HELLO/abort 缺陷已修待回归 |
@@ -33,7 +33,8 @@
 | [10](10-maint.md) | BLE DPT 通道 | `components/c6_maint/` | LLDD §4.9 / FR-7 | 🔴 55% 骨架 | 🔴 未编译（默认关）、C6 本地 DPT 项未实现 |
 | [11](11-legacy.md) | TCP 8080 直通桥 | `components/c6_legacy/` | LLDD FR-10 | 🟡 代码完成 | 🔴 未编译（默认关）、未测试 |
 | [12](12-assets-tools.md) | 控制页与工具链 | `assets_src/` `tools/` | SDD §11 / LLDD §4.7 | 🟡 90% | ✅ 工具实测；页面待真机 |
-| [13](13-verification.md) | 验证与测试汇总 | `test/host/` | LLDD §9 | 🟡 G1 绿 / G2 绿 | G3 走查完毕；G4 HIL 未开始 |
+| [13](13-verification.md) | 验证与测试汇总 | `test/host/` | LLDD §9 + doc 22 §8 | 🟡 G1 绿 / G2 绿 | G3 走查完毕；G4 HIL 未开始 |
+| [14](14-sf-link.md) | **SF 链路详设（SPI 落地）** | `components/c6_sf/` `components/c6_link/` | myCar doc 22 §4–§5 | 🟩 代码完成 | ✅ test_sf 7 项；波形兼容待台架 |
 
 ## 系统级完成视图
 
@@ -41,7 +42,7 @@
 需求侧（LLDD §1）                        实现落点                 状态
 FR-1  softAP/Portal/mDNS                 05-net                   🟡 (mDNS 简化实现，待真机)
 FR-2  WS 服务器 / 50Hz 遥测 / <1ms        07-http + 08-bridge      🟡 (已实现，端到端待联调)
-FR-3  LINK 2Mbps / 健康 / 降速            04-link                  🟡 (同上)
+FR-3  LINK（SPI 5M / SF 帧 / 健康）       04-link + 14-sf-link     🟩 (代码完成；22 §8 台架门禁待测)
 FR-4  配对                               06-pair                  🟩
 FR-5  断链即报 LINK_STATE                 08-bridge + 04-link      🟩
 FR-6  自身 OTA + TC275 中继               09-ota + 08-bridge       🟡 (全流程待目标验证)
