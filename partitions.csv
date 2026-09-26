@@ -1,0 +1,11 @@
+# SmartDrive ESP32-C6 partition layout (LLDD 2.1), 8 MB flash
+# Name,               Type, SubType,  Offset,   Size,     Flags
+nvs,                  data, nvs,      0x9000,   0x8000,
+nvs_cert,             data, nvs,      0x11000,  0x4000,
+nvs_keys,             data, nvs_keys, 0x15000,  0x4000,   encrypted
+otadata,              data, ota,      0x19000,  0x2000,
+ota_0,                app,  ota_0,    0x20000,  0x300000,
+ota_1,                app,  ota_1,    0x320000, 0x300000,
+assets,               data, 0x40,     0x620000, 0x80000,
+coredump,             data, coredump, 0x6A0000, 0x10000,
+factory_ota_cache,    data, 0x40,     0x6B0000, 0x100000,

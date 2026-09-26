@@ -1,0 +1,54 @@
+# ---- target / flash ---------------------------------------------------------
+CONFIG_IDF_TARGET="esp32c6"
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_40M=y
+
+# ---- partition table (LLDD 2.1) ----------------------------------------------
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# ---- web server (LLDD 8) ------------------------------------------------------
+CONFIG_HTTPD_WS_SUPPORT=y
+CONFIG_HTTPD_WS_PRE_HANDSHAKE_CB_SUPPORT=y
+CONFIG_HTTPD_WS_POST_HANDSHAKE_CB_SUPPORT=y
+
+# ---- OTA / rollback (LLDD 4.7) -------------------------------------------------
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK_ENABLE=n
+
+# ---- NVS encryption (LLDD 7) ---------------------------------------------------
+CONFIG_NVS_ENCRYPTION=y
+CONFIG_NVS_SEC_KEY_PROTECT_USING_FLASH=y
+
+# ---- core dump to flash (LLDD 4.10 / FR-9) --------------------------------------
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
+CONFIG_ESP_COREDUMP_CHECKSUM_CRC32=y
+CONFIG_ESP_COREDUMP_MAX_TASKS_NUM=16
+
+# ---- networking budget -----------------------------------------------------------
+CONFIG_LWIP_MAX_SOCKETS=16
+CONFIG_LWIP_SO_REUSE=y
+CONFIG_ESP_WIFI_NVS_ENABLED=y
+
+# ---- RTOS / watchdogs (LLDD 2.3 / 4.10) --------------------------------------------
+CONFIG_FREERTOS_HZ=1000
+CONFIG_ESP_TASK_WDT_INIT=y
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=5
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0=y
+CONFIG_ESP_INT_WDT=y
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=6144
+
+# ---- brownout + reset semantics ------------------------------------------------------
+CONFIG_ESP_BROWNOUT_DET=y
+CONFIG_ESP_BROWNOUT_DET_LVL_SEL_2_5V=y
+CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT=y
+
+# ---- logging: runtime default WARN (LLDD 7), raise on bench via menuconfig ----------
+CONFIG_LOG_DEFAULT_LEVEL_WARN=y
+CONFIG_LOG_MAXIMUM_LEVEL_INFO=y
+
+# ---- NVS encryption key scheme (IDF 6.x: keep range-check happy, flash scheme) ----
+CONFIG_NVS_SEC_KEY_PROTECT_USING_FLASH=y
+CONFIG_NVS_SEC_HMAC_EFUSE_KEY_ID=0
