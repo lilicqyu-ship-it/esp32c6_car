@@ -1,0 +1,15 @@
+menu "C6 LINK (UART to TC275)"
+
+    config C6_LINK_TX_GPIO
+        int "LINK UART TX GPIO (to TC275 RX)"
+        default 10
+        range 0 30
+        help
+            LLDD Q1: candidate pin matrix pending EE review; change here only.
+
+    config C6_LINK_RX_GPIO
+        int "LINK UART RX GPIO (from TC275 TX)"
+        default 11
+        range 0 30
+
+endmenu
