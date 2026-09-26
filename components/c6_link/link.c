@@ -212,10 +212,10 @@ static size_t v2_to_sf(const proto_frame_t *vf, sf_frame_t *sf)
             v = proto_get_u16(&vf->data[0]);
             w = proto_get_u16(&vf->data[2]);
         }
+        sf->data[0] = vf->cmd;                       /* op = v2 command      */
         sf->type = SF_TYPE_CMD;
         sf->cid  = SF_CID_DRV;
         sf->len  = 5u;
-        sf->data[0] = vf->cmd;                       /* op = v2 command      */
         proto_put_u16(&sf->data[1], v);
         proto_put_u16(&sf->data[3], w);
         return 1u;
@@ -546,6 +546,21 @@ static void link_handle_gen(void)
 
 /* ================= ISR callbacks ================= */
 
+/* spi_slave_hd_init() arms the segment ISR before link_task exists, and the
+ * TC275 master polls continuously - so a callback can fire while s_link.task
+ * is still NULL (asserts in vTaskGenericNotifyGiveFromISR). Skip the notify
+ * then; the *_notif flags set alongside survive and the task drains them on
+ * its first loop once it has been created. */
+static inline bool IRAM_ATTR link_isr_notify(const link_ctx_t *L, BaseType_t *hpw)
+{
+    if (L->task == NULL)
+    {
+        return false;
+    }
+    vTaskNotifyGiveFromISR(L->task, hpw);
+    return (*hpw == pdTRUE);
+}
+
 static bool IRAM_ATTR cb_sent(void *arg, spi_slave_hd_event_t *e, int *awoken)
 {
     link_ctx_t *L = (link_ctx_t *)arg;
@@ -555,8 +570,7 @@ static bool IRAM_ATTR cb_sent(void *arg, spi_slave_hd_event_t *e, int *awoken)
     L->isr_sent++;
     L->tx_done_notif = true;
     L->host_event_notif = true;
-    vTaskNotifyGiveFromISR(L->task, &hpw);
-    *awoken = (hpw == pdTRUE);
+    *awoken = link_isr_notify(L, &hpw);
     return true;
 }
 
@@ -569,8 +583,7 @@ static bool IRAM_ATTR cb_recv(void *arg, spi_slave_hd_event_t *e, int *awoken)
     L->isr_recv++;
     L->rx_done_notif = true;
     L->host_event_notif = true;
-    vTaskNotifyGiveFromISR(L->task, &hpw);
-    *awoken = (hpw == pdTRUE);
+    *awoken = link_isr_notify(L, &hpw);
     return true;
 }
 
@@ -583,8 +596,7 @@ static bool IRAM_ATTR cb_buffer_tx(void *arg, spi_slave_hd_event_t *e, int *awok
     (void)e;
     L->isr_buftx++;
     L->host_event_notif = true;
-    vTaskNotifyGiveFromISR(L->task, &hpw);
-    *awoken = (hpw == pdTRUE);
+    *awoken = link_isr_notify(L, &hpw);
     return true;
 }
 
@@ -598,8 +610,7 @@ static bool IRAM_ATTR cb_buffer_rx(void *arg, spi_slave_hd_event_t *e, int *awok
     L->isr_bufrx++;
     L->host_event_notif = true;
     L->gen_notif = true;
-    vTaskNotifyGiveFromISR(L->task, &hpw);
-    *awoken = (hpw == pdTRUE);
+    *awoken = link_isr_notify(L, &hpw);
     return true;
 }
 
