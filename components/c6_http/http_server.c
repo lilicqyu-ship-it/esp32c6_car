@@ -127,7 +127,11 @@ static esp_err_t assets_handler(httpd_req_t *req)
     {
         httpd_resp_set_type(req, content_type_for(e.name));
         httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
-        httpd_resp_set_hdr(req, "Cache-Control", "immutable");
+        /* no immutable/max-age: the page and the firmware ship together and
+         * speak one protocol - a browser running a stale cached app.js
+         * against new firmware fails in ways that are painful to debug.
+         * Assets are a few KB gzipped, refetching them is negligible. */
+        httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
         uint32_t off = 0u;
         while (off < e.gz_len)
         {
@@ -161,7 +165,14 @@ static esp_err_t assets_handler(httpd_req_t *req)
 /* WebSocket                                                                  */
 /* ========================================================================== */
 
-/* pre-handshake: token -> role. Rejecting keeps the socket in HTTP mode. */
+/* pre-handshake: token -> role. Rejecting keeps the socket in HTTP mode.
+ * NOTE: the session opened here must NOT become a broadcast target yet. Any
+ * frame written before the 101 response goes out interleaves into the
+ * handshake bytes and the browser rejects the upgrade (observed: WS connect
+ * loop, peer RST ~3 ms after every handshake). ws_sess_open/ws_sess_promote
+ * fire the change callback -> bridge_notify_clients -> http_broadcast_ctl,
+ * so eligibility is what keeps those sends off this socket; the flag is set
+ * in ws_post_handshake once the response is on the wire. */
 static esp_err_t ws_pre_handshake(httpd_req_t *req)
 {
     int fd = httpd_req_to_sockfd(req);
@@ -172,7 +183,6 @@ static esp_err_t ws_pre_handshake(httpd_req_t *req)
     {
         return ESP_FAIL;                          /* table full -> refuse upgrade */
     }
-    ws_sess_set_ws(fd);
     if (get_request_token(req, token, sizeof(token)) && pair_token_ok(token))
     {
         uint8_t hash[16];
@@ -201,6 +211,26 @@ static esp_err_t ws_send_hello(int fd)
                    (ps == PAIR_OPEN) ? "open" : ((ps == PAIR_CLAIMED) ? "claimed" : "idle"),
                    (ws_sess_ctrl_fd() >= 0) ? "true" : "false");
     return ws_send_ctl(fd, json);
+}
+
+/* post-handshake: the 101 response has been sent, so WS frames on this socket
+ * are legal from here on. Mark the session as an established broadcast target
+ * and push hello proactively - the page waits for hello before sending
+ * anything (sendDrive is gated on ctrl), so a hello sent only on the first
+ * received frame would deadlock the connection. */
+static esp_err_t ws_post_handshake(httpd_req_t *req)
+{
+    int fd = httpd_req_to_sockfd(req);
+    ws_session_t *sess;
+
+    ws_sess_set_ws(fd);
+    sess = ws_sess_get(fd);
+    if ((sess != NULL) && (sess->hello_sent == 0u))
+    {
+        sess->hello_sent = 1u;
+        (void)ws_send_hello(fd);
+    }
+    return ESP_OK;
 }
 
 static void ws_handle_binary(const uint8_t *payload, size_t len, int fd)
@@ -252,11 +282,13 @@ static esp_err_t ws_handler(httpd_req_t *req)
     if (sess == NULL)
     {
         /* upgrade went through the pre-handshake callback; if a build has the
-         * callback kconfig off, do the bookkeeping here instead */
+         * callback kconfig off, do the bookkeeping here instead. Either way
+         * the handler only runs post-101, so the session may go live now. */
         if (ws_pre_handshake(req) != ESP_OK)
         {
             return ESP_FAIL;
         }
+        ws_sess_set_ws(fd);
         sess = ws_sess_get(fd);
     }
     if ((sess != NULL) && (sess->hello_sent == 0u))
@@ -639,7 +671,8 @@ esp_err_t http_start(void)
         { .uri = "/ota/tc275", .method = HTTP_POST, .handler = ota_upload_handler },
         { .uri = "/ws",        .method = HTTP_GET,  .handler = ws_handler,
           .is_websocket = true, .handle_ws_control_frames = true,
-          .ws_pre_handshake_cb = ws_pre_handshake },
+          .ws_pre_handshake_cb = ws_pre_handshake,
+          .ws_post_handshake_cb = ws_post_handshake },
         /* catch-all must stay LAST: with the wildcard matcher the first
          * registered match wins, exact entries above shadow these */
         { .uri = "/*",         .method = HTTP_GET,  .handler = portal_redirect },
