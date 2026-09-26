@@ -86,7 +86,9 @@ static bool self_check_pass(void)
            (s_app.self_check != 0);
 }
 
-static void rollback_timer_cb(void *arg)
+/* the confirm writes NVS/OTADATA: run it in a short task, never on the
+ * esp_timer daemon (that would stall the bridge's 20 ms pacing) */
+static void rollback_check_task(void *arg)
 {
     (void)arg;
     if (!link_is_up())
@@ -94,9 +96,21 @@ static void rollback_timer_cb(void *arg)
         /* no LINK 45 s after boot: page still usable, but do not confirm a
          * pending-verify image without the LINK handshake check */
         ESP_LOGW(TAG, "rollback check: LINK not up in time");
-        return;
     }
-    (void)ota_self_confirm_rollback(self_check_pass() ? 1 : 0);
+    else
+    {
+        (void)ota_self_confirm_rollback(self_check_pass() ? 1 : 0);
+    }
+    vTaskDelete(NULL);
+}
+
+static void rollback_timer_cb(void *arg)
+{
+    (void)arg;
+    if (xTaskCreate(rollback_check_task, "rb_chk", 3072, NULL, 5, NULL) != pdPASS)
+    {
+        ESP_LOGE(TAG, "rollback check task OOM - leaving image pending-verify");
+    }
 }
 
 /* ---- diagnostics ---------------------------------------------------------------- */
@@ -113,7 +127,7 @@ void app_diag_snapshot(app_diag_t *out)
     out->frames_rx  = lh.frames_rx;
     out->frames_tx  = lh.frames_tx;
     out->tx_busy    = lh.tx_busy;
-    out->baud       = lh.baud;
+    out->clock_hz   = lh.clock_hz;
     out->rtt_ms     = (int32_t)lh.rtt_ms;
     out->link_up    = lh.state == LINK_UP;
     out->reset_reason = (uint8_t)esp_reset_reason();
@@ -141,7 +155,7 @@ void app_diag_render(char *json, size_t cap)
     (void)snprintf(json, cap,
         "{\"ver\":\"%s\",\"state\":\"%s\",\"slot\":\"%s\",\"factory\":%s,"
         "\"reset\":%u,\"selfcheck\":%u,\"coredump\":%s,\"heap_min\":%u,"
-        "\"link\":{\"up\":%s,\"baud\":%u,\"rtt\":%u,\"crc_err\":%u,"
+        "\"link\":{\"up\":%s,\"clock\":%u,\"rtt\":%u,\"crc_err\":%u,"
         "\"fmt_err\":%u,\"rx\":%u,\"tx\":%u,\"busy\":%u},"
         "\"pair\":\"%s\",\"uptime_s\":%u}",
         esp_app_get_description()->version,
@@ -153,7 +167,7 @@ void app_diag_render(char *json, size_t cap)
         d.coredump_present ? "true" : "false",
         (unsigned)d.heap_min,
         d.link_up ? "true" : "false",
-        (unsigned)d.baud,
+        (unsigned)d.clock_hz,
         (unsigned)d.rtt_ms,
         d.crc_errs, d.fmt_errs,
         (unsigned)d.frames_rx, (unsigned)d.frames_tx, (unsigned)d.tx_busy,

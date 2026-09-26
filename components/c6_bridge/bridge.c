@@ -26,8 +26,8 @@ static const char *TAG = "c6_bridge";
 #define BRIDGE_TASK_PRIO   10u
 #define BRIDGE_TICK_MS     20u
 #define CMD_QUEUE_LEN      32            /* LLDD 2.4 */
-#define RELAY_CHUNK_SIZE   512u
-#define RELAY_WINDOW       8u            /* 8 x 512B in flight  */
+#define RELAY_CHUNK_SIZE   240u          /* SF OTA_D/0x31 {u16 idx, data[<=240]} (22 §5.5) */
+#define RELAY_WINDOW       8u            /* 8 x 62 B in flight  */
 #define RELAY_ACK_TMO_MS   2000u
 #define RELAY_MAX_RESEND   1u
 
@@ -111,7 +111,11 @@ static void bridge_send_link_state(void)
     f.seq = 0u;
     f.len = 1u;
     f.data[0] = st;
-    (void)link_send(&f);
+    if (link_send(&f) != ESP_OK)
+    {
+        /* keep the edge alive so the 20 ms tick / next change retries it */
+        s_br.last_link_state_sent = 0xFFu;
+    }
 }
 
 void bridge_notify_clients(void)
@@ -144,6 +148,10 @@ esp_err_t bridge_post_cmd(const proto_frame_t *f, int sd)
     {
         return ESP_ERR_INVALID_ARG;
     }
+    if (s_br.q_cmd == NULL)
+    {
+        return ESP_ERR_INVALID_STATE;           /* bridge_start failed */
+    }
     m.f  = *f;
     m.sd = sd;
     if (xQueueSend(s_br.q_cmd, &m, 0) != pdTRUE)
@@ -158,9 +166,23 @@ void bridge_send_frame(const proto_frame_t *f)
     (void)link_send(f);
 }
 
-/* ---- relay pump internals ------------------------------------------------------*/
+/* ---- relay pump internals ------------------------------------------------------
+ * All relay_* state (incl. the resend ring) is touched under relay_mtx.
+ * Lock order: relay_mtx -> link tx_mtx (never the reverse).  The 2 s credit
+ * wait in feed runs OUTSIDE the lock so ACK processing can make progress.
+ */
 
-static void relay_reset(void)
+static void relay_lock(void)
+{
+    (void)xSemaphoreTake(s_br.relay_mtx, portMAX_DELAY);
+}
+
+static void relay_unlock(void)
+{
+    (void)xSemaphoreGive(s_br.relay_mtx);
+}
+
+static void relay_reset_nolock(void)
 {
     s_br.relay_active      = false;
     s_br.relay_sd          = -1;
@@ -200,62 +222,76 @@ static void relay_abort_send(void)
 
 static void relay_send_chunk(const relay_chunk_t *c)
 {
-    proto_frame_t f;
-
-    f.ver = PROTO_VER;
-    f.cmd = PROTO_CMD_OTA_CHUNK;
-    f.seq = 0u;
-    f.len = (uint8_t)(2u + c->len);
-    proto_put_u16(&f.data[0], c->idx);
-    memcpy(&f.data[2], c->data, c->len);
-    (void)link_send(&f);
+    /* SPI link fast path: SF OTA_D/0x31 {u16 idx, data[<=240]} (T5) */
+    (void)link_send_ota_chunk(c->idx, c->data, c->len);
 }
 
-/* called with a fresh 0x62 ACK from the LINK */
+/* called with a fresh 0x62 ACK from the LINK (bridge task, no lock held) */
 static void relay_on_ack(const proto_frame_t *f)
 {
     uint16_t idx;
+    uint32_t popped = 0u;
+    bool complete = false;
+    bool failed = false;
 
-    if (!s_br.relay_active || (f->len < 3u))
+    if (f->len < 3u)
     {
         return;
     }
     idx = proto_get_u16(&f->data[0]);
+
+    relay_lock();
+    if (!s_br.relay_active)
+    {
+        relay_unlock();
+        return;
+    }
     if (f->data[2] != 0u)
     {
         ESP_LOGW(TAG, "TC275 chunk %u NAK (%u)", idx, f->data[2]);
         relay_abort_send();
-        relay_reset();
-        return;
+        relay_reset_nolock();
+        failed = true;
     }
-    if ((uint32_t)(idx + 1u) > s_br.relay_acked)
+    else if ((uint32_t)(idx + 1u) > s_br.relay_acked)
     {
         s_br.relay_acked = (uint32_t)idx + 1u;
         s_br.relay_last_progress_ms = (uint32_t)(esp_timer_get_time() / 1000);
         s_br.relay_resend = 0u;
-        (void)xSemaphoreGive(s_br.credit);   /* window refills */
 
-        /* pop everything up to and including idx from the resend ring */
+        /* pop everything up to and including idx, then refill the window with
+         * exactly one credit per popped chunk (cumulative ACKs included) */
         while ((s_br.inflight_count > 0u) &&
                (s_br.inflight[s_br.inflight_head].idx <= idx))
         {
             s_br.inflight_head =
                 (uint16_t)((s_br.inflight_head + 1u) % RELAY_WINDOW);
             s_br.inflight_count--;
+            popped++;
         }
-
-        if (s_br.relay_acked >= s_br.relay_chunk_count)
+        while (popped-- > 0u)
         {
-            proto_frame_t r;
-            r.ver = PROTO_VER;
-            r.cmd = PROTO_CMD_OTA_STATUS;
-            r.seq = 0u;
-            r.len = 2u;
-            r.data[0] = PROTO_OTA_STATE_DONE;
-            r.data[1] = 100u;
-            (void)link_send(&r);
-            ESP_LOGI(TAG, "ota transfer complete (TC275 verifying+signing)");
+            (void)xSemaphoreGive(s_br.credit);
         }
+        complete = (s_br.relay_acked >= s_br.relay_chunk_count);
+    }
+    relay_unlock();
+
+    if (failed)
+    {
+        return;
+    }
+    if (complete)
+    {
+        proto_frame_t r;
+        r.ver = PROTO_VER;
+        r.cmd = PROTO_CMD_OTA_STATUS;
+        r.seq = 0u;
+        r.len = 2u;
+        r.data[0] = PROTO_OTA_STATE_DONE;
+        r.data[1] = 100u;
+        (void)link_send(&r);
+        ESP_LOGI(TAG, "ota transfer complete (TC275 verifying+signing)");
     }
 }
 
@@ -264,7 +300,7 @@ static void relay_on_status(const proto_frame_t *f)
 {
     char json[96];
 
-    if (!s_br.relay_active || (f->len < 2u))
+    if (f->len < 2u)
     {
         return;
     }
@@ -274,7 +310,9 @@ static void relay_on_status(const proto_frame_t *f)
     http_broadcast_ctl(json);
     if (f->data[0] == PROTO_OTA_STATE_FAILED)
     {
-        relay_reset();
+        relay_lock();
+        relay_reset_nolock();
+        relay_unlock();
     }
 }
 
@@ -282,27 +320,34 @@ static void relay_on_status(const proto_frame_t *f)
 static void relay_on_swap(const proto_frame_t *f)
 {
     (void)f;
+    relay_lock();
     if (!s_br.relay_active)
     {
+        relay_unlock();
         return;
     }
+    relay_reset_nolock();
+    relay_unlock();
     http_broadcast_ctl("{\"t\":\"otaswap\"}");
-    relay_reset();
 }
 
 /* tick: resend on 2 s ACK silence (LLDD 4.6.3) */
 static void relay_tick(void)
 {
     uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
+    bool abort = false;
 
+    relay_lock();
     if (!s_br.relay_active)
     {
+        relay_unlock();
         return;
     }
     if (!link_is_up())
     {
         relay_abort_send();
-        relay_reset();
+        relay_reset_nolock();
+        relay_unlock();
         return;
     }
     if ((s_br.inflight_count > 0u) &&
@@ -319,9 +364,15 @@ static void relay_tick(void)
         else
         {
             relay_abort_send();
-            relay_reset();
-            http_broadcast_ctl("{\"t\":\"otaerror\",\"e\":\"relay\"}");
+            relay_reset_nolock();
+            abort = true;
         }
+    }
+    relay_unlock();
+
+    if (abort)
+    {
+        http_broadcast_ctl("{\"t\":\"otaerror\",\"e\":\"relay\"}");
     }
 }
 
@@ -369,7 +420,9 @@ esp_err_t ota_relay_begin(int sd, size_t total)
     proto_put_u32(&f.data[4], s_br.relay_crc);   /* reserved: whole-image crc */
     if (link_send(&f) != ESP_OK)
     {
-        relay_reset();
+        relay_lock();
+        relay_reset_nolock();
+        relay_unlock();
         return ESP_ERR_INVALID_STATE;
     }
     ESP_LOGI(TAG, "ota relay begin: %" PRIu32 " B in %" PRIu32 " chunks",
@@ -379,36 +432,42 @@ esp_err_t ota_relay_begin(int sd, size_t total)
 
 esp_err_t ota_relay_feed(int sd, const uint8_t *chunk, size_t n)
 {
-    relay_chunk_t msg;
-    uint32_t now;
-
-    if (!s_br.relay_active || (sd != s_br.relay_sd))
+    while (n > 0u)
     {
-        return ESP_ERR_INVALID_STATE;
-    }
-    /* credit window: pause reading HTTP here (LLDD 4.6.3) */
-    if (xSemaphoreTake(s_br.credit, pdMS_TO_TICKS(RELAY_ACK_TMO_MS)) != pdTRUE)
-    {
-        relay_abort_send();
-        relay_reset();
-        return ESP_ERR_TIMEOUT;
-    }
-    now = (uint32_t)(esp_timer_get_time() / 1000);
-    s_br.relay_last_progress_ms = now;
+        relay_chunk_t msg;
+        size_t sub = (n < RELAY_CHUNK_SIZE) ? n : RELAY_CHUNK_SIZE;
 
-    memset(&msg, 0, sizeof(msg));
-    msg.idx = s_br.relay_next_idx;
-    if (n > RELAY_CHUNK_SIZE)
-    {
-        n = RELAY_CHUNK_SIZE;
-    }
-    msg.len = (uint16_t)n;
-    memcpy(msg.data, chunk, n);
-    relay_send_chunk(&msg);
+        /* credit window: pause reading HTTP here (LLDD 4.6.3) */
+        if (xSemaphoreTake(s_br.credit, pdMS_TO_TICKS(RELAY_ACK_TMO_MS)) != pdTRUE)
+        {
+            relay_lock();
+            relay_abort_send();
+            relay_reset_nolock();
+            relay_unlock();
+            return ESP_ERR_TIMEOUT;
+        }
 
-    s_br.inflight[(s_br.inflight_head + s_br.inflight_count) % RELAY_WINDOW] = msg;
-    s_br.inflight_count++;
-    s_br.relay_next_idx = (uint16_t)(msg.idx + 1u);
+        relay_lock();
+        if (!s_br.relay_active || (sd != s_br.relay_sd))
+        {
+            relay_unlock();
+            (void)xSemaphoreGive(s_br.credit);
+            return ESP_ERR_INVALID_STATE;
+        }
+        memset(&msg, 0, sizeof(msg));
+        msg.idx = s_br.relay_next_idx;
+        msg.len = (uint16_t)sub;
+        memcpy(msg.data, chunk, sub);
+        relay_send_chunk(&msg);
+        s_br.inflight[(s_br.inflight_head + s_br.inflight_count) % RELAY_WINDOW] = msg;
+        s_br.inflight_count++;
+        s_br.relay_next_idx = (uint16_t)(msg.idx + 1u);
+        s_br.relay_last_progress_ms = (uint32_t)(esp_timer_get_time() / 1000);
+        relay_unlock();
+
+        chunk += sub;
+        n     -= sub;
+    }
     return ESP_OK;
 }
 
@@ -416,6 +475,7 @@ esp_err_t ota_relay_finish(int sd, char *json, size_t cap)
 {
     int64_t t0 = esp_timer_get_time() / 1000;
     bool ok;
+    uint32_t acked = 0u, chunks = 0u;
 
     if (!s_br.relay_active || (sd != s_br.relay_sd))
     {
@@ -431,29 +491,36 @@ esp_err_t ota_relay_finish(int sd, char *json, size_t cap)
         }
         vTaskDelay(pdMS_TO_TICKS(50));
     }
-    ok = (s_br.relay_acked >= s_br.relay_chunk_count) && link_is_up();
-    if (json != NULL && cap > 0u)
-    {
-        (void)snprintf(json, cap,
-                       "{\"ok\":%s,\"acked\":%" PRIu32 ",\"total_chunks\":%" PRIu32 "}",
-                       ok ? "true" : "false",
-                       s_br.relay_acked, s_br.relay_chunk_count);
-    }
+    relay_lock();
+    ok = (s_br.relay_acked >= s_br.relay_chunk_count) && link_is_up() &&
+         s_br.relay_active && (sd == s_br.relay_sd);
+    acked  = s_br.relay_acked;
+    chunks = s_br.relay_chunk_count;
     if (!ok)
     {
         relay_abort_send();
     }
-    relay_reset();
+    relay_reset_nolock();
+    relay_unlock();
+
+    if (json != NULL && cap > 0u)
+    {
+        (void)snprintf(json, cap,
+                       "{\"ok\":%s,\"acked\":%" PRIu32 ",\"total_chunks\":%" PRIu32 "}",
+                       ok ? "true" : "false", acked, chunks);
+    }
     return ok ? ESP_OK : ESP_FAIL;
 }
 
 void ota_relay_abort(int sd)
 {
+    relay_lock();
     if (s_br.relay_active && (sd == s_br.relay_sd))
     {
         relay_abort_send();
-        relay_reset();
+        relay_reset_nolock();
     }
+    relay_unlock();
 }
 
 /* ---- command pump ---------------------------------------------------------------*/
@@ -527,8 +594,17 @@ static void pump_link_frame(const proto_frame_t *f)
         case PROTO_CMD_OTA_SWAP:
             relay_on_swap(f);
             break;
-        case PROTO_CMD_PING:
-        case PROTO_CMD_BAUD:
+        case PROTO_CMD_DIAG:
+            /* SF EVT / generic-ACK tunnel from the SPI link (22 §5.5) */
+            if (f->len >= 1u)
+            {
+                char json[96];
+                (void)snprintf(json, sizeof(json),
+                               "{\"t\":\"evt\",\"cid\":%u,\"n\":%u}",
+                               f->data[0], (unsigned)(f->len - 1u));
+                http_broadcast_ctl(json);
+            }
+            break;
         case PROTO_CMD_LINK_STATE:
         default:
             break;                            /* handled in c6_link or ignored */
@@ -547,19 +623,14 @@ static void pump_link_event(const link_event_t *ev)
             break;
         case LINK_EV_DOWN:
             s_br.link_up = false;
+            relay_lock();
             relay_abort_send();
-            relay_reset();
+            relay_reset_nolock();
+            relay_unlock();
             s_br.last_link_state_sent = 0xFFu;
             bridge_send_link_state();
             http_broadcast_ctl("{\"t\":\"tc\",\"on\":false}");
             break;
-        case LINK_EV_BAUD_CHANGED:
-        {
-            char json[64];
-            (void)snprintf(json, sizeof(json), "{\"t\":\"baud\",\"v\":%" PRIu32 "}", ev->baud);
-            http_broadcast_ctl(json);
-            break;
-        }
         default:
             break;
     }
@@ -573,10 +644,14 @@ static void bridge_task(void *arg)
     QueueHandle_t member;
 
     (void)arg;
+    /* the task publishes/withdraws its own handle: on a wiring failure it
+     * self-deletes, and the 20 ms timer must never notify a stale TCB */
+    s_bridge_task = xTaskGetCurrentTaskHandle();
     set = xQueueCreateSet(8u + CMD_QUEUE_LEN + LINK_RX_QUEUE_LEN);
     if (set == NULL)
     {
         ESP_LOGE(TAG, "queue set alloc failed");
+        s_bridge_task = NULL;
         vTaskDelete(NULL);
         return;
     }
@@ -585,6 +660,7 @@ static void bridge_task(void *arg)
         (xQueueAddToSet(link_event_queue(), set) != pdTRUE))
     {
         ESP_LOGE(TAG, "queue set wiring failed");
+        s_bridge_task = NULL;
         vTaskDelete(NULL);
         return;
     }
@@ -623,6 +699,7 @@ static void bridge_task(void *arg)
             /* 20 ms pacing tick: mailbox drain + relay watchdog */
             broadcast_telemetry();
             relay_tick();
+            bridge_send_link_state();   /* retry edges dropped earlier by BUSY */
         }
         (void)esp_task_wdt_reset();
     }
@@ -645,10 +722,10 @@ esp_err_t bridge_start(void)
         .callback = bridge_tick_timer_cb,
         .name     = "bridge_tick",
     };
-    TaskHandle_t th = NULL;
 
     memset(&s_br, 0, sizeof(s_br));
     s_br.relay_sd = -1;
+    s_bridge_task = NULL;
     s_br.q_cmd     = xQueueCreate(CMD_QUEUE_LEN, sizeof(cmd_msg_t));
     s_br.mbox_mtx  = xSemaphoreCreateMutex();
     s_br.relay_mtx = xSemaphoreCreateMutex();
@@ -660,11 +737,10 @@ esp_err_t bridge_start(void)
     }
 
     if (xTaskCreate(bridge_task, "bridge", BRIDGE_TASK_STACK, NULL,
-                    BRIDGE_TASK_PRIO, &th) != pdPASS)
+                    BRIDGE_TASK_PRIO, NULL) != pdPASS)
     {
         return ESP_ERR_NO_MEM;
     }
-    s_bridge_task = th;
 
     if (esp_timer_create(&args, &tick_timer) != ESP_OK)
     {

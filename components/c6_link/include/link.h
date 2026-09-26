@@ -1,20 +1,31 @@
 /*
- * link.h - LINK 2 Mbps full-duplex frame link to TC275 (LLDD 4.5)
+ * link.h - SPI half-duplex frame link to TC275 (myCar doc 22, SDD §3.7/§6.1a)
  *
- * UART1 (Kconfig pins, default TX=GPIO10 RX=GPIO11), 921600 baud start,
- * 30 s zero-CRC-error window then proposes 2 Mbps via 0x44; >=10 CRC errors
- * in the sliding window falls back one step (921600 <-> 2M, two-step table).
+ * Transport: TC275 QSPI3 master <-> ESP32-C6 SPI2 slave (spi_slave_hd, segment
+ * mode), 5 wires SCLK/MOSI/MISO/CS + open-drain IRQ (data-ready).  Frames on
+ * the wire are SF frames (components/c6_sf); this component performs the
+ * v2<->SF field mapping (22 §5.5) so bridge/pair keep speaking v2 frames and
+ * stay unaware of the physical layer.
+ *
+ * Shared-register handshake (22 §4.3): the slave publishes
+ * SF_READY / SF_TX_PENDING / SF_RX_ROOM / SF_ALIVE / SF_ERRSTAT / SF_CMDRSP;
+ * the master reads with the read-twice rule and never issues a data
+ * transaction while SF_READY is absent.
  *
  * Contexts:
- *   - uart event task  : RX bytes -> proto parser -> q_link_rx (QueueSet member)
- *   - link_tx_task     : drains the TX frame queue written by link_send()
- *   - esp_timer 20 ms  : health monitor; every 5th tick emits PING
- *   - any caller       : link_send() is mutex-protected, non-blocking
+ *   - link_task (prio 12): queues RX DMA buffers, parses segments -> v2 frames
+ *     into q_rx; assembles TX segments from the SF frame queue; refreshes the
+ *     shared registers; host-liveness watchdog (500 ms -> LINK DOWN).
+ *   - ISR callbacks: only bump counters / notify the task.
+ *   - ALIVE esp_timer (10 ms): SF_ALIVE++ published to the shared registers.
+ *   - any caller: link_send() / link_send_ota_chunk() are mutex-protected,
+ *     non-blocking (BUSY on overflow).
  */
 #ifndef C6_LINK_H
 #define C6_LINK_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "esp_err.h"
@@ -27,69 +38,81 @@
 extern "C" {
 #endif
 
-#define LINK_BAUD_BASE        921600u
-#define LINK_BAUD_FAST        2000000u
+/* Kconfig mirror of the production clock step (master drives the clock; this
+ * value is used for diag/telemetry reporting and TC275-side alignment). */
+#ifndef CONFIG_C6_LINK_SPI_CLOCK_HZ
+#define CONFIG_C6_LINK_SPI_CLOCK_HZ 5000000
+#endif
 
-#define LINK_TX_QUEUE_LEN     8
-#define LINK_RX_QUEUE_LEN     16                     /* LLDD 2.4 */
+#define LINK_TX_QUEUE_LEN     32                     /* SF frames queued    */
+#define LINK_RX_QUEUE_LEN     16                     /* v2 frames to bridge */
+
+#define LINK_SEG_SIZE         512u                   /* DMA segment buffers */
+#define LINK_OTA_CHUNK_MAX    240u                   /* 22 §5.5             */
 
 typedef enum
 {
     LINK_DOWN = 0,
-    LINK_UP,
+    LINK_UP,                       /* host transactions observed           */
 } link_state_t;
 
 typedef struct
 {
     link_state_t state;
-    uint32_t baud;                                      /* current          */
-    uint32_t rtt_ms;                                    /* last PING rtt    */
-    uint16_t crc_errs;                                  /* since last query */
+    uint32_t clock_hz;                              /* production step     */
+    uint32_t rtt_ms;                                /* host poll cadence   */
+    uint16_t crc_errs;                              /* since last query    */
     uint16_t fmt_errs;
+    uint16_t seq_errs;
     uint32_t frames_rx;
     uint32_t frames_tx;
-    uint32_t tx_busy;                                   /* link_send BUSY   */
-    uint32_t last_rx_ms;                                /* esp_timer ms     */
+    uint32_t tx_busy;
+    uint32_t last_rx_ms;                            /* last host event     */
 } link_health_t;
 
 typedef enum
 {
     LINK_EV_NONE = 0,
-    LINK_EV_UP,                                         /* first frames / heartbeat alive */
-    LINK_EV_DOWN,                                       /* 500 ms silent                  */
-    LINK_EV_BAUD_CHANGED,
+    LINK_EV_UP,
+    LINK_EV_DOWN,
 } link_event_id_t;
 
 typedef struct
 {
     link_event_id_t id;
-    uint32_t baud;                                      /* valid on BAUD_CHANGED */
+    uint32_t reserved;
 } link_event_t;
 
-/* Create UART driver + tasks + timers. Safe to call once from app_main. */
+/* Create SPI slave HD + task + timers. Call once from app_main. */
 esp_err_t link_init(void);
 
-/* Enqueue one frame for TX. ESP_ERR_NO_MEM (=BUSY) when the queue is full. */
+/*
+ * Enqueue one v2 frame for TX (mapped to SF per 22 §5.5).
+ * ESP_ERR_NO_MEM (=BUSY) when the frame queue is full - callers must treat
+ * commands as backpressure, never drop silently.
+ */
 esp_err_t link_send(const proto_frame_t *f);
 
-/* QueueSet member delivering inbound frames (bridge owns the QueueSet). */
-QueueHandle_t link_rx_queue(void);
+/*
+ * OTA relay fast path: map (idx, chunk) directly into SF OTA_D/0x31
+ * {u16 idx, data[<=LINK_OTA_CHUNK_MAX]}.  ESP_ERR_NO_MEM on overflow,
+ * ESP_ERR_INVALID_ARG when n exceeds the SF chunk limit.
+ */
+esp_err_t link_send_ota_chunk(uint16_t idx, const uint8_t *data, size_t n);
 
-/* QueueSet member delivering link_event_t (bridge owns the QueueSet). */
+/* QueueSet members delivering v2 frames / link events (bridge owns the set). */
+QueueHandle_t link_rx_queue(void);
 QueueHandle_t link_event_queue(void);
 
-/* Optional mirror of every inbound frame (legacy bridge, diag sniffers).
- * Called from the RX task context - keep it short, never block. */
-void link_set_tap(void (*tap)(const proto_frame_t *f));
-
-/* Snapshot of health counters (lock-protected, cheap). */
+/* Snapshot of health counters (lock-protected). */
 void link_get_health(link_health_t *out);
 
-/* Hot path used by the health monitor; also usable from diag handlers. */
-esp_err_t link_request_baud(uint32_t baud);
-
-/* True when the 500 ms watchdog sees traffic (page "车端已连接"). */
+/* True when host transactions keep the 500 ms watchdog fed. */
 bool link_is_up(void);
+
+/* Mirror of every inbound v2 frame (legacy bridge, diag sniffers).
+ * Called from the link task context - keep it short, never block. */
+void link_set_tap(void (*tap)(const proto_frame_t *f));
 
 #ifdef __cplusplus
 }

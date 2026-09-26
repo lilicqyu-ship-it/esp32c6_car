@@ -1,15 +1,58 @@
-menu "C6 LINK (UART to TC275)"
+menu "C6 LINK (SPI slave to TC275, myCar doc 22)"
 
-    config C6_LINK_TX_GPIO
-        int "LINK UART TX GPIO (to TC275 RX)"
-        default 10
-        range 0 30
+    config C6_LINK_SPI_SCLK_GPIO
+        int "LINK SPI SCLK GPIO (from TC275 P33.11)"
+        default 19
         help
-            LLDD Q1: candidate pin matrix pending EE review; change here only.
+            Wiring is the single source of truth: myCar 23-wiring.md §9.1
+            (X1-3 P33.11 SCLK -> J3-9 GPIO19).
 
-    config C6_LINK_RX_GPIO
-        int "LINK UART RX GPIO (from TC275 TX)"
-        default 11
-        range 0 30
+    config C6_LINK_SPI_MOSI_GPIO
+        int "LINK SPI MOSI GPIO (from TC275 P33.12)"
+        default 18
+        help
+            23-wiring.md §9.1: X1-4 P33.12 MTSR -> J3-10 GPIO18.
+
+    config C6_LINK_SPI_MISO_GPIO
+        int "LINK SPI MISO GPIO (to TC275 P33.13)"
+        default 20
+        help
+            23-wiring.md §9.1: X1-5 P33.13 MRST <- J3-8 GPIO20.
+
+    config C6_LINK_SPI_CS_GPIO
+        int "LINK SPI CS GPIO (from TC275 P23.4 SLSO5)"
+        default 23
+        help
+            23-wiring.md §9.1: X1-12 P23.4 SLSO5 -> J3-5 GPIO23.
+
+    config C6_LINK_SPI_IRQ_GPIO
+        int "LINK data-ready IRQ GPIO (open-drain, to TC275 P23.0)"
+        default 21
+        help
+            23-wiring.md §9.1: J3-7 GPIO21 -> X1-8 P23.0 (IOM edge IRQ).
+            Open-drain; the 10k pull-up to 3V3 is external hardware
+            (22 §3.2 - without it the link degrades to pure polling).
+
+    config C6_LINK_SPI_CLOCK_HZ
+        int "Production clock step (master-driven, diag mirror)"
+        default 5000000
+        range 1000000 20000000
+        help
+            The master owns the clock; this value is what the slave reports
+            in diagnostics and what the TC275 side should be configured to.
+            Ladder per 22 §8 G5: 1/2/5/10/20 MHz, production baseline 5 MHz.
+
+    config C6_LINK_DEBUG_UART_RX_GPIO
+        int "Debug console RX GPIO (documentation anchor)"
+        default 6
+        help
+            23-wiring.md §2: GPIO6/7 are the debug console (J1-5/6) - the
+            UART is NOT used by the LINK anymore (T3: former TX=10/RX=11
+            defaults were wrong and are deleted).  Kept here so that
+            documentation, Kconfig and hardware agree.
+
+    config C6_LINK_DEBUG_UART_TX_GPIO
+        int "Debug console TX GPIO (documentation anchor)"
+        default 7
 
 endmenu

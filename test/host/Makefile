@@ -2,9 +2,9 @@
 #   make -C test/host        (or: cc -Icomponents/c6_proto ... directly)
 CC      ?= gcc
 CFLAGS  ?= -std=c99 -O1 -g -Wall -Wextra -Wno-unused-parameter
-INC     := -I../../../components/c6_proto -I../../../components/c6_ota
+INC     := -I../../components/c6_proto -I../../components/c6_ota -I../../components/c6_sf
 
-TESTS   := test_proto test_sha512 test_ed25519 test_bundle
+TESTS   := test_proto test_sha512 test_ed25519 test_bundle test_sf
 RUN_TARGETS := $(addprefix run-,$(TESTS))
 
 all: $(TESTS)
@@ -20,6 +20,9 @@ test_ed25519: test_ed25519.c ../../components/c6_ota/ed25519v.c ../../components
 
 test_bundle: test_bundle.c ../../components/c6_ota/bundle.c ../../components/c6_ota/sha512.c ../../components/c6_ota/ed25519v.c ../../components/c6_proto/proto_frames.c
 	$(CC) $(CFLAGS) $(INC) -o $@ $^ $(LIBS)
+
+test_sf: test_sf.c ../../components/c6_sf/sf_frame.c ../../components/c6_proto/proto_frames.c
+	$(CC) $(CFLAGS) $(INC) -I../../components/c6_sf -o $@ $^
 
 run-: ;@true
 run-%: %

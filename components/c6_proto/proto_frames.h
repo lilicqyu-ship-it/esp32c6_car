@@ -34,6 +34,7 @@ extern "C" {
 #define PROTO_VER            0x02u
 #define PROTO_MAX_PAYLOAD    64u
 #define PROTO_HEADER_LEN     6u                                  /* sync ver cmd seq len */
+#define PROTO_SEQ_OFF        4u                                  /* byte index of SEQ    */
 #define PROTO_MAX_FRAME      (PROTO_HEADER_LEN + PROTO_MAX_PAYLOAD + 2u)
 
 /* ---- command table (SDD 6.2 + LLDD 3.1) --------------------------------- */
@@ -54,11 +55,10 @@ extern "C" {
 #define PROTO_CMD_CLEAR_FAULT       0x31u
 #define PROTO_CMD_EMERGENCY_STOP    0x32u
 
-/* v2 transport frames */
+/* v2 transport frames (phone/WS side; the SPI LINK uses SF frames instead -
+ * 0x43 PING / 0x44 BAUD were UART-era and are deleted per myCar doc 22 T2) */
 #define PROTO_CMD_TELEMETRY         0x41u  /* TC275 -> C6, 20 ms             */
 #define PROTO_CMD_LINK_STATE        0x42u  /* C6 -> TC275, client set change */
-#define PROTO_CMD_PING              0x43u  /* both ways, PONG echoes SEQ     */
-#define PROTO_CMD_BAUD              0x44u  /* handshake, LLDD 4.5            */
 
 /* v2 control frames (payload[0] = sub-op) */
 #define PROTO_CMD_DRIVE             0x50u  /* v:i16, omega:i16 (doubles as heartbeat) */
@@ -87,15 +87,6 @@ extern "C" {
 #define PROTO_CMD_DPT_SELFTEST      0x79u  /* C6-local items (LLDD 3.1)       */
 
 /* ---- payload sub-ops -----------------------------------------------------*/
-/* 0x43 PING */
-#define PROTO_PING_TYPE_PING        0x00u
-#define PROTO_PING_TYPE_PONG        0x01u
-
-/* 0x44 BAUD */
-#define PROTO_BAUD_OP_REQ           0x00u
-#define PROTO_BAUD_OP_ACK           0x01u
-#define PROTO_BAUD_OP_NAK           0x02u
-
 /* 0x42 LINK_STATE */
 #define PROTO_LINKSTATE_NONE        0x00u  /* no client at all               */
 #define PROTO_LINKSTATE_SPECTATORS  0x01u  /* spectators only                */

@@ -54,7 +54,7 @@ static int test_zero_length_frame(void)
     size_t n;
     int i;
 
-    n = proto_build(PROTO_CMD_PING, 7, NULL, 0, wire, sizeof(wire));
+    n = proto_build(PROTO_CMD_LINK_STATE, 7, NULL, 0, wire, sizeof(wire));
     MU_CHECK_EQ(n, (long long)(PROTO_HEADER_LEN + 2));
 
     proto_parser_init(&p);
@@ -63,7 +63,7 @@ static int test_zero_length_frame(void)
         proto_parser_feed(&p, wire[i], &out);
     }
     MU_CHECK_EQ(out.len, 0);
-    MU_CHECK_EQ(out.cmd, PROTO_CMD_PING);
+    MU_CHECK_EQ(out.cmd, PROTO_CMD_LINK_STATE);
     return 0;
 }
 
@@ -120,7 +120,7 @@ static int test_bad_version_rejected(void)
     size_t n;
     int i;
 
-    n = proto_build(PROTO_CMD_PING, 1, NULL, 0, wire, sizeof(wire));
+    n = proto_build(PROTO_CMD_LINK_STATE, 1, NULL, 0, wire, sizeof(wire));
     MU_CHECK(n > 0);
     wire[2] = 0x03;                            /* corrupt VER */
 
@@ -171,7 +171,7 @@ static int test_resync_after_garbage(void)
     int i;
     const uint8_t junk[] = { 0x00, 0xFF, 0xAA, 0x12, 0x55, 0x55, 0x77 };
 
-    n = proto_build(PROTO_CMD_PING, 9, NULL, 0, wire, sizeof(wire));
+    n = proto_build(PROTO_CMD_LINK_STATE, 9, NULL, 0, wire, sizeof(wire));
     MU_CHECK(n > 0);
 
     proto_parser_init(&p);
@@ -183,7 +183,7 @@ static int test_resync_after_garbage(void)
     {
         (void)proto_parser_feed(&p, wire[i], &out);
     }
-    MU_CHECK_EQ(out.cmd, PROTO_CMD_PING);
+    MU_CHECK_EQ(out.cmd, PROTO_CMD_LINK_STATE);
     MU_CHECK_EQ(out.seq, 9);
     return 0;
 }

@@ -30,7 +30,7 @@ typedef struct
     uint32_t frames_rx;
     uint32_t frames_tx;
     uint32_t tx_busy;
-    uint32_t baud;
+    uint32_t clock_hz;   /* LINK SPI clock (diag mirror of Kconfig/GEN) */
     int32_t  rtt_ms;
     bool     link_up;
     uint8_t  reset_reason;                   /* esp_reset_reason()          */
