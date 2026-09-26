@@ -98,3 +98,20 @@ SEL_2 = 3.27 V 最高），`sdkconfig.defaults` 中不要写 `..._SEL_2_5V`
 idf.py -p COM14 flash
 python tools/serial_sniff.py COM14 30
 ```
+
+## 7. 真机验证记录（手机端，2026-09-26）
+
+台架：C6(COM14) + iPhone，无 TC275（LINK down 为预期，`rollback check`
+45 s 告警按设计不动作）。
+
+| 项 | 结果 | 证据 |
+|---|---|---|
+| assets 分区烧入正式控制页 | ✅ | `build_assets.py` → parttool 写入；启动日志 `c6_assets: assets partition: 3 entries`（替代 embedded fallback） |
+| softAP 接入 + DHCP | ✅ | `STA joined (count=1)`、`DHCP server assigned IP ... 192.168.4.2` |
+| **captive portal 弹窗** | ✅ | 手机弹 Portal 并加载控制页（修复前探测 URL 返回 404/405，无弹窗） |
+| WS 观察态（spectator） | ✅ | `ws fd=47 spectator`，页面 WS 建立并收 hello/0x42 |
+| 并发抗压 | ✅（修复后） | captive DNS 劫持手机全部 App 后台探测 → 16 socket 池 ENFILE（`accept(23)` 风暴）→ 池扩 24 + httpd 10 后消失 |
+
+弹窗关闭瞬间页面全部连接被手机 RST（`recv : 104`）为正常现象。
+**待 TC275 上电后联调**：配对开窗（车侧键 3 s → PAIR_NOTIFY）→ CTRL
+角色 → 摇杆驾驶/遥测端到端（本文档 §4 HIL 项覆盖）。

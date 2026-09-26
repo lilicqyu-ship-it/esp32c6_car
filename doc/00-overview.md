@@ -25,14 +25,14 @@
 | [02](02-proto.md) | proto v2 编解码（手机/WS 侧） | `components/c6_proto/` | SDD V1.2 §6.1b / LLDD §3.1 | ✅ 100% | ✅ 主机单测 12 项 + 10⁷ 模糊 |
 | [03](03-factory.md) | 出厂数据（NVS） | `components/c6_factory/` | LLDD §4.8 | 🟡 90% | 🟩 编译通过；写入入口（DPT）未接 |
 | [04](04-link.md) | LINK 链路（**SPI 从机**） | `components/c6_link/` `components/c6_sf/` | myCar doc 22 / SDD V1.2 §6.1a / FR-3 | 🟩 代码完成 | 🟩 G1/G2 通过；波形兼容与台架门禁待测 |
-| [05](05-net.md) | 接入网 | `components/c6_net/` | LLDD §4.2 / FR-1 | 🟡 90% | 🟩 编译通过；Portal/mDNS 待真机确认 |
+| [05](05-net.md) | 接入网 | `components/c6_net/` | LLDD §4.2 / FR-1 | 🟡 95% | 🟩 编译通过；Portal 弹窗真机验证（09-26）；mDNS 解析待手机实测 |
 | [06](06-pair.md) | 配对与会话 | `components/c6_pair/` | LLDD §4.4 / FR-4 | 🟩 100% | 🟩 编译通过，流程未联调 |
 | [07](07-http.md) | Web 服务 | `components/c6_http/` | LLDD §4.3 / §3.2 / FR-2 | 🟡 92% | 🟩 编译通过；HELLO/abort 缺陷已修待回归 |
 | [08](08-bridge.md) | 三台泵 | `components/c6_bridge/` | LLDD §4.6 / §2.4 | 🟩 97% | 🟩 编译通过；信用窗时序待 HIL |
 | [09](09-ota.md) | 自身升级与验签 | `components/c6_ota/` | LLDD §4.7 / FR-6 | 🟡 92% | ✅ 验签/解析主机单测；OTA 流程待目标验证 |
 | [10](10-maint.md) | BLE DPT 通道 | `components/c6_maint/` | LLDD §4.9 / FR-7 | 🔴 55% 骨架 | 🔴 未编译（默认关）、C6 本地 DPT 项未实现 |
 | [11](11-legacy.md) | TCP 8080 直通桥 | `components/c6_legacy/` | LLDD FR-10 | 🟡 代码完成 | 🔴 未编译（默认关）、未测试 |
-| [12](12-assets-tools.md) | 控制页与工具链 | `assets_src/` `tools/` | SDD §11 / LLDD §4.7 | 🟡 90% | ✅ 工具实测；页面待真机 |
+| [12](12-assets-tools.md) | 控制页与工具链 | `assets_src/` `tools/` | SDD §11 / LLDD §4.7 | 🟡 95% | ✅ 工具实测；assets 分区+Portal+WS 观察态真机验证（09-26）；配对/驾驶待 TC275 |
 | [13](13-verification.md) | 验证与测试汇总 | `test/host/` | LLDD §9 + doc 22 §8 | 🟡 G1 绿 / G2 绿 | G3 走查完毕；G4 HIL 未开始 |
 | [14](14-sf-link.md) | **SF 链路详设（SPI 落地）** | `components/c6_sf/` `components/c6_link/` | myCar doc 22 §4–§5 | 🟩 代码完成 | ✅ test_sf 7 项；波形兼容待台架 |
 | [15](15-led.md) | WS2812 状态指示灯 | `components/c6_led/` | bring-up 运维需求 | 🟩 代码完成 | 🟩 真机验证（绿心跳=正常） |
