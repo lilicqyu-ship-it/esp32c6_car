@@ -17,6 +17,18 @@ typedef struct
 
 static ws_ctx_t s_ws;
 
+/*
+ * The table mutex is created in ws_sessions_init() (called from http_start).
+ * bridge_task starts before the httpd and queries the client set from its
+ * first loop iteration - every public accessor must tolerate the
+ * not-yet-initialized state with a safe answer instead of taking a NULL
+ * queue handle (observed on target: xQueueSemaphoreTake assert at boot).
+ */
+static inline int ws_ready(void)
+{
+    return (s_ws.mtx != NULL);
+}
+
 void ws_sessions_init(void)
 {
     memset(&s_ws, 0, sizeof(s_ws));
@@ -39,6 +51,11 @@ void ws_on_change(ws_sess_change_cb_t cb)
 ws_session_t *ws_sess_open(int fd)
 {
     ws_session_t *slot = NULL;
+
+    if (!ws_ready())
+    {
+        return NULL;
+    }
 
     if (xSemaphoreTake(s_ws.mtx, pdMS_TO_TICKS(20)) != pdTRUE)
     {
@@ -79,6 +96,11 @@ void ws_sess_close(int fd)
 {
     bool changed = false;
 
+    if (!ws_ready())
+    {
+        return;
+    }
+
     if (xSemaphoreTake(s_ws.mtx, pdMS_TO_TICKS(20)) != pdTRUE)
     {
         return;
@@ -101,7 +123,13 @@ void ws_sess_close(int fd)
 
 void ws_sess_set_ws(int fd)
 {
-    ws_session_t *s = ws_sess_get(fd);
+    ws_session_t *s;
+
+    if (!ws_ready())
+    {
+        return;
+    }
+    s = ws_sess_get(fd);
     if (s != NULL)
     {
         s->ws = true;
@@ -111,6 +139,11 @@ void ws_sess_set_ws(int fd)
 ws_session_t *ws_sess_get(int fd)
 {
     ws_session_t *slot = NULL;
+
+    if (!ws_ready())
+    {
+        return NULL;
+    }
 
     if (xSemaphoreTake(s_ws.mtx, pdMS_TO_TICKS(20)) != pdTRUE)
     {
@@ -130,8 +163,13 @@ ws_session_t *ws_sess_get(int fd)
 
 void ws_sess_promote(int fd, const uint8_t token_hash[WS_TOKEN_HASH_LEN])
 {
-    ws_session_t *s = ws_sess_get(fd);
+    ws_session_t *s;
 
+    if (!ws_ready())
+    {
+        return;
+    }
+    s = ws_sess_get(fd);
     if (s == NULL)
     {
         return;
@@ -162,8 +200,14 @@ void ws_sess_promote(int fd, const uint8_t token_hash[WS_TOKEN_HASH_LEN])
 
 bool ws_sess_check_cmd(int fd, uint8_t seq)
 {
-    ws_session_t *s = ws_sess_get(fd);
+    ws_session_t *s;
     bool ok = false;
+
+    if (!ws_ready())
+    {
+        return false;
+    }
+    s = ws_sess_get(fd);
 
     if (s == NULL)
     {
@@ -192,7 +236,13 @@ bool ws_sess_check_cmd(int fd, uint8_t seq)
 
 void ws_sess_send_ok(int fd)
 {
-    ws_session_t *s = ws_sess_get(fd);
+    ws_session_t *s;
+
+    if (!ws_ready())
+    {
+        return;
+    }
+    s = ws_sess_get(fd);
     if (s != NULL)
     {
         s->slow_count = 0u;
@@ -203,7 +253,13 @@ void ws_sess_send_ok(int fd)
 
 void ws_sess_send_fail(int fd)
 {
-    ws_session_t *s = ws_sess_get(fd);
+    ws_session_t *s;
+
+    if (!ws_ready())
+    {
+        return;
+    }
+    s = ws_sess_get(fd);
     if (s != NULL)
     {
         if (s->slow_count < 255u)
@@ -219,8 +275,14 @@ void ws_sess_send_fail(int fd)
 
 bool ws_sess_skip(int fd, uint32_t tick)
 {
-    ws_session_t *s = ws_sess_get(fd);
+    ws_session_t *s;
     bool skip = false;
+
+    if (!ws_ready())
+    {
+        return true;                                 /* nothing to pace yet */
+    }
+    s = ws_sess_get(fd);
 
     if (s == NULL)
     {
@@ -243,6 +305,11 @@ int ws_sess_count(void)
 {
     int n = 0;
 
+    if (!ws_ready())
+    {
+        return 0;
+    }
+
     if (xSemaphoreTake(s_ws.mtx, pdMS_TO_TICKS(20)) == pdTRUE)
     {
         for (int i = 0; i < WS_MAX_SESSIONS; i++)
@@ -260,6 +327,11 @@ int ws_sess_count(void)
 int ws_sess_ctrl_fd(void)
 {
     int fd = -1;
+
+    if (!ws_ready())
+    {
+        return -1;                                   /* no controller yet   */
+    }
 
     if (xSemaphoreTake(s_ws.mtx, pdMS_TO_TICKS(20)) == pdTRUE)
     {
@@ -279,6 +351,11 @@ int ws_sess_ctrl_fd(void)
 uint8_t ws_sess_link_state(void)
 {
     uint8_t st = 0u;
+
+    if (!ws_ready())
+    {
+        return 0u;
+    }
 
     if (xSemaphoreTake(s_ws.mtx, pdMS_TO_TICKS(20)) == pdTRUE)
     {
@@ -305,6 +382,11 @@ int ws_sessions_foreach_send(ws_send_fn send, const uint8_t *payload, size_t len
     int fds[WS_MAX_SESSIONS];
     int n = 0;
     int reached = 0;
+
+    if (!ws_ready())
+    {
+        return 0;
+    }
 
     if (send == NULL)
     {

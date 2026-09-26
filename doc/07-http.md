@@ -109,4 +109,5 @@ assets.bin: "ASSETS"|ver=1|rsv|count u16|total u32|pad2
 | H-7 | OTA 上传 sink 分发 + abort | 🟩 | abort 缺口已修 |
 | H-8 | assets URL 带 fwVer 防陈旧缓存 | 🔴 | 已有 `Cache-Control: immutable`，URL 版本化未做（页面通过 /api/health 获取版本替代） |
 | H-9 | 会话表主机单测 | 🔴 | ws_sessions 依赖 FreeRTOS 互斥，未做主机测（LLDD §9 列项） |
+| H-11 | **真机首测缺陷修复**：启动时序竞态 | ✅ | bridge_task 先于 httpd 启动即查询客户端集合 → 对 NULL 互斥句柄 assert panic（`xQueueSemaphoreTake` 死循环重启，真机 2026-09-26 首烧复现）。修复：ws_sessions 全部访问器对未初始化状态容错返回安全值；同类隐患一并收敛（bridge_post_cmd/link_send 的队列未创建守卫） |
 | H-10 | 慢客户端降级观测指标暴露 | 🔴 | slow/dead 计数未进 /api/diag |

@@ -702,6 +702,10 @@ esp_err_t link_send(const proto_frame_t *f)
     {
         return ESP_ERR_INVALID_ARG;
     }
+    if (s_link.q_tx == NULL)                         /* link not initialized */
+    {
+        return ESP_ERR_INVALID_STATE;
+    }
     n = v2_to_sf(f, &sf);
     if (n == 0u)
     {
@@ -734,6 +738,10 @@ esp_err_t link_send_ota_chunk(uint16_t idx, const uint8_t *data, size_t n)
     if ((data == NULL) || (n == 0u) || (n > LINK_OTA_CHUNK_MAX))
     {
         return ESP_ERR_INVALID_ARG;
+    }
+    if ((s_link.q_tx == NULL) || (s_link.tx_mtx == NULL))
+    {
+        return ESP_ERR_INVALID_STATE;
     }
     if (xSemaphoreTake(s_link.tx_mtx, pdMS_TO_TICKS(10)) != pdTRUE)
     {
