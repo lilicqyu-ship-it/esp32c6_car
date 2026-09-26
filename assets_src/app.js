@@ -99,6 +99,7 @@ function onTelemetry(p) {
   const d32 = (o) => (p[o] | (p[o+1] << 8) | (p[o+2] << 16) | (p[o+3] << 24)) >>> 0;
   const tl = dl(11), tr = dl(13), ml = dl(15), mr = dl(17);
   const pct = p[21], fault = dv(9);
+  renderSpeed(ml, mr);
   setBar("bar_lt", tl, 800); setBar("bar_lm", ml, 800);
   setBar("bar_rt", tr, 800); setBar("bar_rm", mr, 800);
   $("v_lt").textContent = ml; $("v_rt").textContent = mr;
@@ -115,6 +116,40 @@ function setBar(id, v, full) {
   el.style.width = w + "%";
   if (v >= 0) el.style.left = "50%"; else el.style.left = "auto";
 }
+
+/* ---- speedometer: body speed = mean of measured wheel speeds (mm/s) ----
+ * signed average -> in-place rotation reads 0; km/h with 1 decimal because
+ * full joystick deflection is only 600 mm/s = 2.2 km/h. */
+const STOP_MM_S = 30;                          /* < 0.1 km/h counts as stopped */
+let teleTs = 0;
+const speedCache = { v: "", d: "" };
+function renderSpeed(ml, mr) {
+  teleTs = Date.now();
+  const v = (ml + mr) / 2;
+  const stopped = Math.abs(v) < STOP_MM_S;
+  const sv = stopped ? "0.0" : (Math.abs(v) * 0.0036).toFixed(1);
+  const dir = stopped ? "" : (v > 0 ? "▲ 前进" : "▼ 倒车");
+  if (sv !== speedCache.v) { $("speed_val").textContent = sv; speedCache.v = sv; }
+  if (dir !== speedCache.d) {
+    $("speed_dir").textContent = dir || "\u00a0";
+    $("speed_dir").className = stopped ? "" : (v > 0 ? "fwd" : "rev");
+    speedCache.d = dir;
+  }
+  $("speed_val").classList.remove("stale");
+}
+/* staleness guard: 50 Hz nominal, so 1 s without telemetry means the chain
+ * (TC275 -> SPI -> C6 -> WS) is broken somewhere - freeze the number as "--"
+ * instead of letting a stale speed keep looking live */
+setInterval(() => {
+  if (Date.now() - teleTs <= 1000 || teleTs === 0) return;
+  if (speedCache.v !== "--") {
+    speedCache.v = "--"; speedCache.d = "";
+    $("speed_val").textContent = "--";
+    $("speed_val").classList.add("stale");
+    $("speed_dir").textContent = "\u00a0";
+    $("speed_dir").className = "";
+  }
+}, 500);
 
 /* ---- drive: joystick -> DRIVE 0x50 {v:i16, w:i16} at 30 Hz ---- */
 function sendDrive(v, w) {

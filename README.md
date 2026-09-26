@@ -21,7 +21,7 @@ components/
   c6_ota/        自身 A/B：bundle 流式解析 + ed25519 验签(仅验签) + assets 更新 + 回滚
   c6_maint/      BLE DPT（CONFIG_C6_MAINT_BLE，默认关）
   c6_legacy/     TCP 8080 直通桥（CONFIG_C6_LEGACY_TCP，默认关）
-assets_src/      控制页源码（摇杆 + 50Hz 仪表 + 配对 + 双板 OTA）
+assets_src/      控制页源码（摇杆 + 50Hz 仪表/车速表 + 配对 + 双板 OTA）
 tools/           build_assets.py · sign_bundle.py · ed25519_ref.py · gen_crypto_consts.py
 test/host/       主机单测（proto 模糊 10^7 / sha512 / ed25519 RFC8032 / bundle）
 ```
