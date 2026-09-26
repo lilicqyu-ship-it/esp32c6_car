@@ -18,10 +18,11 @@ extern "C" {
 /* A client that has failed this many consecutive sends is not "slow", it is
  * gone (phone locked / left the AP / app killed without a WS CLOSE frame).
  * httpd does not probe an idle WS peer, so nothing would ever free its lwIP
- * socket - after a few disconnects accept() ENFILEs and the page stops loading.
- * At the 50 Hz telemetry rate this is ~1 s of undeliverable frames, well past
- * any transient TCP stall, so the socket is closed and reclaimed. */
-#define WS_DEAD_CLOSE     50u
+ * socket - after a few disconnects accept() ENFILEs and the page stops
+ * loading. Backstop behind the kernel TCP keepalive (httpd keep_alive_*):
+ * at the 50 Hz telemetry rate 12 failures is well under a second of
+ * undeliverable frames, so the socket is closed and reclaimed fast. */
+#define WS_DEAD_CLOSE     12u
 
 typedef enum
 {

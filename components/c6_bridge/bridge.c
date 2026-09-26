@@ -166,7 +166,21 @@ esp_err_t bridge_post_cmd(const proto_frame_t *f, int sd)
     m.sd = sd;
     if (xQueueSend(s_br.q_cmd, &m, 0) != pdTRUE)
     {
-        return ESP_ERR_NO_MEM;                /* busy -> WS error, no drop */
+        if (f->cmd != PROTO_CMD_DRIVE)
+        {
+            return ESP_ERR_NO_MEM;              /* busy -> WS error, no drop */
+        }
+        /* DRIVE is periodic newest-wins (30 Hz joystick, doubles as heartbeat):
+         * a pump stall behind a slow broadcast leaves the queue full of
+         * superseded positions, so drop the oldest and take the new one - the
+         * page must never see a bogus "busy" on the control path. One-shot
+         * commands (pair / OTA / DPT) keep the strict no-drop error. */
+        cmd_msg_t stale;
+        if ((xQueueReceive(s_br.q_cmd, &stale, 0) != pdTRUE) ||
+            (xQueueSend(s_br.q_cmd, &m, 0) != pdTRUE))
+        {
+            return ESP_ERR_NO_MEM;
+        }
     }
     return ESP_OK;
 }

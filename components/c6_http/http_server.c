@@ -13,6 +13,8 @@
 #include "esp_system.h"
 #include "esp_partition.h"
 
+#include "lwip/sockets.h"
+
 #include "assets_store.h"
 #include "pair.h"
 #include "proto_frames.h"
@@ -226,11 +228,22 @@ static esp_err_t ws_send_hello(int fd)
  * and push hello proactively - the page waits for hello before sending
  * anything (sendDrive is gated on ctrl), so a hello sent only on the first
  * received frame would deadlock the connection. */
+static void ws_tighten_send_timeout(int fd)
+{
+    /* WS frames go out from the bridge broadcaster too; a peer whose TCP
+     * window has filled (stalled / going away) must not park the sender for
+     * the 10 s httpd default - 500 ms is ample for a ~100 B frame, and long
+     * sender stalls are what backs the command queue up into "busy" replies. */
+    const struct timeval tv = { .tv_sec = 0, .tv_usec = 500u * 1000u };
+    (void)setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+}
+
 static esp_err_t ws_post_handshake(httpd_req_t *req)
 {
     int fd = httpd_req_to_sockfd(req);
     ws_session_t *sess;
 
+    ws_tighten_send_timeout(fd);
     ws_sess_set_ws(fd);
     sess = ws_sess_get(fd);
     if ((sess != NULL) && (sess->hello_sent == 0u))
@@ -296,6 +309,7 @@ static esp_err_t ws_handler(httpd_req_t *req)
         {
             return ESP_FAIL;
         }
+        ws_tighten_send_timeout(fd);
         ws_sess_set_ws(fd);
         sess = ws_sess_get(fd);
     }
@@ -698,6 +712,16 @@ esp_err_t http_start(void)
     cfg.recv_wait_timeout  = 10;
     cfg.send_wait_timeout  = 10;
     cfg.close_fn           = http_close_cb;
+    /* Phones disconnect silently (lock screen / left the AP / app killed): no
+     * FIN ever arrives, httpd has no idle timeout, and nothing else would ever
+     * free the socket - the httpd slot and lwIP pcb stay parked until refresh
+     * bursts ENFILE accept() and the page stops loading (multi-refresh repro).
+     * Kernel keepalive probes reap such a peer in <=9 s, close_fn frees the
+     * session and the pcb goes back to the pool. */
+    cfg.keep_alive_enable  = true;
+    cfg.keep_alive_idle    = 5;    /* s of silence before probing starts */
+    cfg.keep_alive_interval = 2;   /* s between probes                   */
+    cfg.keep_alive_count   = 2;    /* unanswered probes -> peer is gone  */
 
     ws_sessions_init();
     (void)assets_store_init();
