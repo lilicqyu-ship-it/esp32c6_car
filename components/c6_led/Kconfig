@@ -1,0 +1,20 @@
+menu "c6_led (WS2812 status indicator)"
+
+    config C6_LED_ENABLE
+        bool "Enable WS2812 status LED patterns"
+        default y
+        help
+            One addressable RGB LED (WS2812) driven by RMT on a single GPIO.
+            The app state machine maps transitions onto patterns: boot=white
+            slow blink, factory_wait=yellow double-blink, net_start=blue 2 Hz,
+            online=green heartbeat (normal operation), net failure=red 4 Hz.
+
+    config C6_LED_GPIO
+        int "WS2812 data GPIO"
+        default 8
+        range 0 30
+        help
+            ESP32-C6-DevKitC-1 wires the onboard WS2812 to GPIO8.  GPIO8 is a
+            strapping pin (sampled at reset); driving it after boot is safe.
+
+endmenu

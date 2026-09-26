@@ -17,6 +17,7 @@
 #include "bridge.h"
 #include "factory.h"
 #include "http_server.h"
+#include "led.h"
 #include "link.h"
 #include "net.h"
 #include "ota_self.h"
@@ -74,6 +75,10 @@ void app_main(void)
     esp_brownout_disable();
     ESP_LOGW(TAG, "BENCH: brownout detector DISABLED (weak supply mode)");
 #endif
+
+    /* status indicator first: white slow blink until the state machine moves */
+    (void)led_init();
+
     factory_data_t fact;
     bool have_factory = true;
     char ssid[32];
@@ -148,6 +153,7 @@ void app_main(void)
     {
         ESP_LOGE(TAG, "net start failed");
         app_state_enter(APP_NET_START);
+        led_pattern(LED_PAT_FAULT);
     }
 
     /* 5. web plane */

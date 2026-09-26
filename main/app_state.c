@@ -17,6 +17,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include "led.h"
 #include "link.h"
 #include "ota_self.h"
 #include "pair.h"
@@ -182,6 +183,13 @@ void app_state_enter(app_state_t st)
 {
     s_app.state = st;
     ESP_LOGI(TAG, "app state -> %s", app_state_name());
+    switch (st)
+    {
+    case APP_FACTORY_WAIT: led_pattern(LED_PAT_FACTORY_WAIT); break;
+    case APP_NET_START:    led_pattern(LED_PAT_NET_START);    break;
+    case APP_ONLINE:       led_pattern(LED_PAT_ONLINE);       break;
+    default:                                                 break;
+    }
 }
 
 void app_state_init(bool factory_mode)

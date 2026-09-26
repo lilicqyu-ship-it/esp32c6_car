@@ -35,6 +35,7 @@
 | [12](12-assets-tools.md) | 控制页与工具链 | `assets_src/` `tools/` | SDD §11 / LLDD §4.7 | 🟡 90% | ✅ 工具实测；页面待真机 |
 | [13](13-verification.md) | 验证与测试汇总 | `test/host/` | LLDD §9 + doc 22 §8 | 🟡 G1 绿 / G2 绿 | G3 走查完毕；G4 HIL 未开始 |
 | [14](14-sf-link.md) | **SF 链路详设（SPI 落地）** | `components/c6_sf/` `components/c6_link/` | myCar doc 22 §4–§5 | 🟩 代码完成 | ✅ test_sf 7 项；波形兼容待台架 |
+| [15](15-led.md) | WS2812 状态指示灯 | `components/c6_led/` | bring-up 运维需求 | 🟩 代码完成 | 🟩 真机验证（绿心跳=正常） |
 
 ## 系统级完成视图
 
