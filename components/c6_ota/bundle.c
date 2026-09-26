@@ -163,7 +163,8 @@ bundle_state_t bundle_feed(bundle_ctx_t *b, const uint8_t *data, size_t len,
             size_t remain = b->info.c6_len - b->blob_got;
             size_t n = (len < remain) ? len : remain;
             c6_sha512_update(&b->c6_hash, data, n);
-            if ((sink != NULL) && (sink(cb_arg, (uint32_t)b->blob_got, data, n) != 0))
+            /* sink offset is GLOBAL (measured from start of c6.bin) */
+            if ((sink != NULL) && (sink(cb_arg, (uint32_t)b->total_got, data, n) != 0))
             {
                 return (b->state = BUNDLE_ERR_SIZE);
             }
@@ -191,7 +192,8 @@ bundle_state_t bundle_feed(bundle_ctx_t *b, const uint8_t *data, size_t len,
             size_t remain = b->info.assets_len - b->blob_got;
             size_t n = (len < remain) ? len : remain;
             c6_sha512_update(&b->assets_hash, data, n);
-            if ((sink != NULL) && (sink(cb_arg, (uint32_t)b->blob_got, data, n) != 0))
+            /* global offset: c6.bin has already streamed, blob_got restarted at 0 */
+            if ((sink != NULL) && (sink(cb_arg, (uint32_t)b->total_got, data, n) != 0))
             {
                 return (b->state = BUNDLE_ERR_SIZE);
             }

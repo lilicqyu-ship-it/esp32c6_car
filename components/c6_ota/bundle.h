@@ -59,8 +59,10 @@ typedef struct bundle_ctx bundle_ctx_t;
 bundle_ctx_t *bundle_new(const uint8_t *pubkey, size_t pub_len);
 void          bundle_free(bundle_ctx_t *ctx);
 
-/* Feed one chunk; sink(cb_arg, offset_in_blob, data, len) is invoked for
- * payload bytes only (c6.bin first, then assets.bin). Returns state. */
+/* Feed one chunk; sink(cb_arg, off, data, len) is invoked for payload bytes
+ * only (c6.bin first, then assets.bin) with GLOBAL stream offsets:
+ * off is measured from the start of c6.bin, i.e. [0,c6_len) app,
+ * [c6_len, c6_len+assets_len) asset blob. Returns state. */
 bundle_state_t bundle_feed(bundle_ctx_t *ctx, const uint8_t *data, size_t len,
                            void *cb_arg,
                            int (*sink)(void *arg, uint32_t off, const uint8_t *d, size_t n));

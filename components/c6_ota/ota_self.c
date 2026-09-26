@@ -50,6 +50,7 @@ typedef struct
     SemaphoreHandle_t done;
     volatile bool     active;
     volatile bool     abort;
+    volatile bool     task_exited;            /* ota_task ran to completion   */
     int               sd;
     bundle_ctx_t     *bundle;
     const esp_partition_t *target;
@@ -106,8 +107,9 @@ static int ota_sink(void *arg, uint32_t off, const uint8_t *d, size_t n)
     {
         if (o->ota == 0)
         {
-            /* lazy begin: signature already verified at header parse */
-            if (esp_ota_begin(o->target, o->total, &o->ota) != ESP_OK)
+            /* lazy begin: signature already verified at header parse, so size
+             * the write to the signed c6_len, not the untrusted total field */
+            if (esp_ota_begin(o->target, info.c6_len, &o->ota) != ESP_OK)
             {
                 o->ota = 0;
                 return -1;
@@ -142,6 +144,7 @@ static void ota_task(void *arg)
     if (chunk == NULL)
     {
         o->result = BUNDLE_ERR_SIZE;
+        o->task_exited = true;
         (void)xSemaphoreGive(o->done);
         vTaskDelete(NULL);
         return;
@@ -200,6 +203,9 @@ static void ota_task(void *arg)
             o->ota = 0;
         }
     }
+    /* publish exit BEFORE the handoff flag so a timed-out finish() may
+     * reclaim q/done/bundle only after this task can no longer touch them */
+    o->task_exited = true;
     (void)xSemaphoreGive(o->done);
     vTaskDelete(NULL);
 }
@@ -216,8 +222,17 @@ esp_err_t ota_self_begin(int sd, size_t total)
     }
     if (o->active)
     {
-        (void)xSemaphoreGive(o->mtx);
-        return ESP_ERR_INVALID_STATE;
+        /* Previous session still marked active: only recycle once its task
+         * provably exited, otherwise a running ota_task would UAF. */
+        if (!o->task_exited)
+        {
+            (void)xSemaphoreGive(o->mtx);
+            return ESP_ERR_INVALID_STATE;
+        }
+        if (o->q != NULL) { vQueueDelete(o->q); o->q = NULL; }
+        if (o->done != NULL) { vSemaphoreDelete(o->done); o->done = NULL; }
+        if (o->bundle != NULL) { bundle_free(o->bundle); o->bundle = NULL; }
+        o->active = false;
     }
 
     const esp_partition_t *run  = esp_ota_get_running_partition();
@@ -230,7 +245,7 @@ esp_err_t ota_self_begin(int sd, size_t total)
 
     o->target      = next;
     o->assets_part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
-                                              (esp_partition_type_t)0x40, "assets");
+                                              (esp_partition_subtype_t)0x40, "assets");
     o->total       = total;
     o->sd          = sd;
     o->result      = BUNDLE_IDLE;
@@ -259,10 +274,12 @@ esp_err_t ota_self_begin(int sd, size_t total)
     }
 
     o->active = true;
+    o->task_exited = false;
     (void)xSemaphoreGive(o->mtx);
 
     if (xTaskCreate(ota_task, "ota_task", OTA_TASK_STACK, NULL, OTA_TASK_PRIO, NULL) != pdPASS)
     {
+        /* task never started, so reclaiming here is race-free */
         (void)xSemaphoreTake(o->mtx, portMAX_DELAY);
         o->active = false;
         vQueueDelete(o->q); o->q = NULL;
@@ -313,7 +330,18 @@ esp_err_t ota_self_finish(int sd, char *json, size_t cap)
     if (xSemaphoreTake(o->done, pdMS_TO_TICKS(OTA_FINISH_TMO_MS)) != pdTRUE)
     {
         o->abort = true;
-        (void)xSemaphoreTake(o->done, pdMS_TO_TICKS(5000));
+        if (xSemaphoreTake(o->done, pdMS_TO_TICKS(5000)) != pdTRUE)
+        {
+            (void)xSemaphoreTake(o->mtx, portMAX_DELAY);
+            if (!o->task_exited)
+            {
+                /* ota_task may still touch q/done/bundle: leave the session
+                 * alive for the next begin() to reclaim, never free here */
+                (void)xSemaphoreGive(o->mtx);
+                return ESP_FAIL;
+            }
+            (void)xSemaphoreGive(o->mtx);
+        }
     }
     st  = o->result;
     ok  = (st == BUNDLE_DONE) && !o->abort;

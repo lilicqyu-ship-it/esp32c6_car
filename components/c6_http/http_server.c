@@ -72,20 +72,24 @@ static esp_err_t send_json(httpd_req_t *req, int code, const char *json)
 static bool get_request_token(httpd_req_t *req, char *out, size_t cap)
 {
     char query[128];
+    bool found = false;
 
+    if (cap == 0u)
+    {
+        return false;
+    }
     out[0] = '\0';
     if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK)
     {
-        if (httpd_query_key_value(query, "token", out, cap) == ESP_OK)
-        {
-            return true;
-        }
+        found = (httpd_query_key_value(query, "token", out, cap) == ESP_OK);
     }
-    if (httpd_req_get_hdr_value_str(req, "X-Session-Token", out, cap) == ESP_OK)
+    if (!found &&
+        httpd_req_get_hdr_value_str(req, "X-Session-Token", out, cap) == ESP_OK)
     {
-        return (out[0] != '\0');
+        found = (out[0] != '\0');
     }
-    return false;
+    out[cap - 1u] = '\0';                /* httpd fills cap without NUL */
+    return found;
 }
 
 static const char *content_type_for(const char *name)
@@ -205,7 +209,12 @@ static void ws_handle_binary(const uint8_t *payload, size_t len, int fd)
     proto_frame_t f;
 
     /* C6 first gate (LLDD 4.3): role + monotonic SEQ; final verdict on TC275 */
-    if (!ws_sess_check_cmd(fd, payload[4]))
+    if (len < PROTO_HEADER_LEN)
+    {
+        (void)ws_send_ctl(fd, "{\"t\":\"err\",\"e\":\"frame\"}");
+        return;
+    }
+    if (!ws_sess_check_cmd(fd, payload[PROTO_SEQ_OFF]))
     {
         (void)ws_send_ctl(fd, "{\"t\":\"err\",\"e\":\"auth\"}");
         return;
@@ -269,7 +278,9 @@ static esp_err_t ws_handler(httpd_req_t *req)
     if (pkt.len > (RX_BUF_LEN - 1u))
     {
         (void)ws_send_ctl(fd, "{\"t\":\"err\",\"e\":\"big\"}");
-        return ESP_OK;
+        /* the frame body is still queued in the socket: staying in sync is
+         * not worth partial-drain logic, drop the connection instead */
+        return ESP_FAIL;
     }
     pkt.payload = buf;
     ret = httpd_ws_recv_frame(req, &pkt, pkt.len);
@@ -294,7 +305,9 @@ static esp_err_t ws_handler(httpd_req_t *req)
         }
         case HTTPD_WS_TYPE_CLOSE:
             ws_sess_close(fd);
-            break;
+            return ESP_FAIL;                        /* hang up: a later frame
+                                                       would silently re-open
+                                                       the closed session */
         default:
             break;
     }
@@ -534,6 +547,8 @@ static esp_err_t ota_upload_handler(httpd_req_t *req)
 
 static void http_close_cb(httpd_handle_t hd, int sockfd)
 {
+    bool was_ctrl;
+
     (void)hd;
     /* LLDD 4.6.3: phone disconnect must terminate an in-flight relay/self
      * OTA immediately (0x65 ABORT to TC275 / ota_task abort flag) */
@@ -545,7 +560,12 @@ static void http_close_cb(httpd_handle_t hd, int sockfd)
     {
         s_http.sink_tc.abort(sockfd);
     }
+    was_ctrl = http_sd_is_ctrl(sockfd);            /* must read role before close */
     ws_sess_close(sockfd);
+    if (was_ctrl)
+    {
+        pair_ctrl_gone();                          /* release CLAIMED pairing gate */
+    }
 }
 
 /* ========================================================================== */
@@ -622,7 +642,10 @@ esp_err_t http_start(void)
         err = httpd_register_uri_handler(s_http.hd, &uris[i]);
         if (err != ESP_OK)
         {
-            ESP_LOGW(TAG, "register %s failed: %s", uris[i].uri, esp_err_to_name(err));
+            ESP_LOGE(TAG, "register %s failed: %s", uris[i].uri, esp_err_to_name(err));
+            (void)httpd_stop(s_http.hd);
+            s_http.hd = NULL;
+            return err;
         }
     }
     ESP_LOGI(TAG, "httpd up (v%s)", s_http.fw_ver);

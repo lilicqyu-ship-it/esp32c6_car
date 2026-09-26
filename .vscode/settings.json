@@ -33,5 +33,6 @@
   "idf.customExtraVars": {
     "OPENOCD_USB_ADAPTER_LOCATION": "2-1.2",
     "IDF_TARGET": "esp32c6"
-  }
+  },
+  "idf.flashType": "UART"
 }

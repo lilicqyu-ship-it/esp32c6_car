@@ -211,6 +211,10 @@ pair_result_t pair_request(int sd, char *token_hex, size_t cap)
     s_pair.reject    = false;
     (void)xSemaphoreGive(s_pair.mtx);
 
+    /* drain a CONFIRM that arrived after an earlier round timed out —
+     * otherwise it would adjudicate this round immediately */
+    while (xSemaphoreTake(s_pair.confirm, 0) == pdTRUE) {}
+
     pair_send_req(sd);
 
     if (xSemaphoreTake(s_pair.confirm, pdMS_TO_TICKS(PAIR_CONFIRM_TMO_MS)) != pdTRUE)

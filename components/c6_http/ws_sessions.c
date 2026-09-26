@@ -154,7 +154,8 @@ void ws_sess_promote(int fd, const uint8_t token_hash[WS_TOKEN_HASH_LEN])
     {
         memcpy(s->token_hash, token_hash, WS_TOKEN_HASH_LEN);
     }
-    s->last_seq = 0u;
+    /* sentinel: promote itself is frame 0, the first command frame is next */
+    s->last_seq = 0xFFFFFFFFu;
     (void)xSemaphoreGive(s_ws.mtx);
     notify_change();
 }
@@ -170,10 +171,19 @@ bool ws_sess_check_cmd(int fd, uint8_t seq)
     }
     if (xSemaphoreTake(s_ws.mtx, pdMS_TO_TICKS(20)) == pdTRUE)
     {
-        if ((s->role == WS_ROLE_CTRL) && (seq != s->last_seq))
+        if (s->role == WS_ROLE_CTRL)
         {
-            s->last_seq = seq;                       /* monotonic gate (LLDD 4.3) */
-            ok = true;
+            /* Strict forward window: seq must be ahead of last_seq by 1..64
+             * in uint8 modular space. The 0xFFFFFFFF sentinel means "no frame
+             * seen yet" and admits any seq. Replays and >64-ahead jumps drop. */
+            uint8_t delta;
+            if ((s->last_seq == 0xFFFFFFFFu) ||
+                (delta = (uint8_t)(seq - (uint8_t)s->last_seq),
+                 (delta >= 1u) && (delta <= 64u)))
+            {
+                s->last_seq = seq;
+                ok = true;
+            }
         }
         (void)xSemaphoreGive(s_ws.mtx);
     }
@@ -218,7 +228,9 @@ bool ws_sess_skip(int fd, uint32_t tick)
     }
     if (s->dead_count != 0u)
     {
-        return true;                                 /* keepalive only */
+        /* keepalive-only, but probe once every 64 ticks so a client whose
+         * TCP stall cleared can revive itself (send_ok resets the counters) */
+        return (tick % 64u) != 0u;
     }
     if (s->slow_count >= WS_SLOW_THRESHOLD)
     {

@@ -103,20 +103,41 @@ static int put_rr_head(uint8_t *p, int off, int cap, const char *name,
 
 static int strcasecmp_local(const char *a, const char *b);
 
-static int name_matches(const uint8_t *q, int qlen, int *pos, const char *want)
+/* wire size of an encoded name: one length byte per label + root byte */
+static int name_wire_len(const char *name)
 {
-    /* decode labels at *pos and compare case-insensitively with "want" */
+    int labels = 0;
+    const char *s = name;
+
+    if (*s == '\0')
+    {
+        return 1;
+    }
+    while (*s != '\0')
+    {
+        if (*s++ == '.')
+        {
+            labels++;
+        }
+    }
+    return labels + 1 + (int)strlen(name);
+}
+
+/* Decode one uncompressed wire name at *pos into out (lower-cased, dotted)
+ * and park *pos on the trailing QTYPE. Returns 0 on malformed input. */
+static int name_read(const uint8_t *q, int qlen, int *pos, char *out, size_t cap)
+{
     int p = *pos;
-    char got[80];
-    int gp = 0;
+    size_t gp = 0u;
 
     for (;;)
     {
+        int len, i;
         if (p >= qlen)
         {
             return 0;
         }
-        int len = q[p++];
+        len = q[p++];
         if (len == 0)
         {
             break;                                   /* end of name */
@@ -129,23 +150,27 @@ static int name_matches(const uint8_t *q, int qlen, int *pos, const char *want)
         {
             return 0;
         }
-        if ((gp + len + 1) >= (int)sizeof(got))
+        if ((gp + (size_t)len + 1u) >= cap)
         {
             return 0;
         }
-        if (gp > 0)
+        if (gp > 0u)
         {
-            got[gp++] = '.';
+            out[gp++] = '.';
         }
-        for (int i = 0; i < len; i++)
+        for (i = 0; i < len; i++)
         {
-            got[gp++] = (char)tolower((unsigned char)q[p + i]);
+            out[gp++] = (char)tolower((unsigned char)q[p + i]);
         }
         p += len;
     }
-    got[gp] = '\0';
+    out[gp] = '\0';
+    if ((p + 4) > qlen)
+    {
+        return 0;                                    /* QTYPE + QCLASS */
+    }
     *pos = p;
-    return strcasecmp_local(got, want) == 0;
+    return 1;
 }
 
 static int strcasecmp_local(const char *a, const char *b)
@@ -169,23 +194,24 @@ static int mdns_build_answer(const uint8_t *q, int qlen, uint16_t qtype,
                              const struct sockaddr_in *to, uint8_t *out, int cap)
 {
     int off = (int)sizeof(mdns_hdr_t);
-    int qoff = (int)sizeof(mdns_hdr_t);
 
     if (qtype != 1u && qtype != 12u && qtype != 33u && qtype != 16u && qtype != 255u)
     {
         return 0;                                    /* A PTR SRV TXT ANY only */
     }
 
-    /* which name is asked? walk the single question */
-    (void)name_matches(q, qlen, &qoff, s_md.fqdn);
-    int is_host = name_matches(q, qlen, &qoff, s_md.fqdn);
-    int is_svc  = 0;
-    if (!is_host)
+    /* which name is asked? decode the single question exactly once */
+    char qname[80];
+    int pos = (int)sizeof(mdns_hdr_t);
+
+    if (name_read(q, qlen, &pos, qname, sizeof(qname)) == 0)
     {
-        qoff = (int)sizeof(mdns_hdr_t);
-        is_svc = name_matches(q, qlen, &qoff, "_http._tcp.local") ||
-                 name_matches(q, qlen, &qoff, s_md.svc);
+        return 0;
     }
+    int is_host = (strcasecmp_local(qname, s_md.fqdn) == 0);
+    int is_svc  = (!is_host) &&
+                  ((strcasecmp_local(qname, "_http._tcp.local") == 0) ||
+                   (strcasecmp_local(qname, s_md.svc) == 0));
     (void)to;
 
     if (!is_host && !is_svc)
@@ -195,7 +221,7 @@ static int mdns_build_answer(const uint8_t *q, int qlen, uint16_t qtype,
 
     mdns_hdr_t *h = (mdns_hdr_t *)out;
     memset(out, 0, (size_t)sizeof(mdns_hdr_t));
-    h->flags   = 0x8400u;                            /* QR=1 AA=1 */
+    h->flags   = lwip_htons(0x8400u);                  /* QR=1 AA=1, on the wire */
     h->qdcount = 0u;                                 /* legacy unicast query gets no echo */
 
     if (is_host)
@@ -214,7 +240,7 @@ static int mdns_build_answer(const uint8_t *q, int qlen, uint16_t qtype,
     {
         /* PTR "_http._tcp.local" -> "<inst>._http._tcp.local" */
         int rd_off = put_rr_head(out, off, cap, "_http._tcp.local", 12u, 0x8001u, 4500u,
-                                 (uint16_t)(2u + strlen(s_md.svc) + 1u));
+                                 (uint16_t)name_wire_len(s_md.svc));
         if (rd_off < 0)
         {
             return 0;
@@ -228,7 +254,7 @@ static int mdns_build_answer(const uint8_t *q, int qlen, uint16_t qtype,
         off = rd_off;
 
         /* SRV for the service */
-        int srv_len = 6 + (int)(2u + strlen(s_md.fqdn) + 1u);
+        int srv_len = 6 + name_wire_len(s_md.fqdn);
         rd_off = put_rr_head(out, off, cap, s_md.svc, 33u, 0x8001u, 120u, (uint16_t)srv_len);
         if (rd_off < 0)
         {
@@ -257,14 +283,16 @@ static int mdns_build_answer(const uint8_t *q, int qlen, uint16_t qtype,
         an = lwip_ntohs(h->ancount);
         h->ancount = lwip_htons((uint16_t)(an + 1u));
 
-        /* TXT (additional) "path=/" */
-        static const char txt[] = "path=/";
+        /* TXT (additional) "path=/" as one length-prefixed character-string */
+        static const char txt[] = "path=/";
+        int txt_len = (int)sizeof(txt);              /* count byte + text */
         rd_off = put_rr_head(out, off, cap, s_md.svc, 16u, 0x8001u, 4500u,
-                             (uint16_t)(sizeof(txt) - 1u));
+                             (uint16_t)txt_len);
         if (rd_off < 0)
         {
             return 0;
         }
+        out[rd_off++] = (uint8_t)(sizeof(txt) - 1u);
         memcpy(&out[rd_off], txt, sizeof(txt) - 1u);
         off = rd_off + (int)(sizeof(txt) - 1u);
         an = lwip_ntohs(h->ancount);
@@ -297,15 +325,23 @@ static void mdns_task(void *arg)
             continue;
         }
         mdns_hdr_t *q = (mdns_hdr_t *)rx;
-        if (q->qdcount != lwip_htons(1u))
+        /* never answer a response (echo storm), and only single-question queries */
+        if ((q->qdcount != lwip_htons(1u)) ||
+            ((lwip_ntohs(q->flags) & 0x8000u) != 0u))
         {
             continue;
         }
 
-        /* question type sits right after the name */
+        /* skip the question name: labels end at the root (0x00) byte;
+         * QTYPE/QCLASS may legitimately start with 0x00 so stop here */
         int qoff = (int)sizeof(mdns_hdr_t);
-        while ((qoff < n) && (rx[qoff] != 0u) && ((rx[qoff] & 0xC0) == 0u))
+        while ((qoff < n) && (rx[qoff] != 0u))
         {
+            if ((rx[qoff] & 0xC0) != 0u)
+            {
+                qoff = n;                            /* compressed: reject */
+                break;
+            }
             qoff += rx[qoff] + 1;
         }
         qoff += 1;                                   /* root label */

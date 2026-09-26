@@ -56,6 +56,13 @@ static const http_upload_sink_t SINK_RELAY = {
     .abort  = ota_relay_abort,
 };
 
+/* net counts AP stations, bridge only cares that the set changed */
+static void on_ap_clients(int count)
+{
+    (void)count;
+    bridge_notify_clients();
+}
+
 void app_main(void)
 {
     factory_data_t fact;
@@ -135,7 +142,7 @@ void app_main(void)
     }
 
     /* 6. AP station counting also feeds 0x42 LINK_STATE */
-    net_on_ap_clients((net_clients_cb_t)(void *)bridge_notify_clients);
+    net_on_ap_clients(on_ap_clients);
 
 #ifdef CONFIG_C6_MAINT_BLE
     (void)maint_ble_start();

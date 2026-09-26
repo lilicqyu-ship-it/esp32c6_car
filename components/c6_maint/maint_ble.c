@@ -33,6 +33,8 @@ static uint16_t s_ind_attr;
 
 static int chr_ind_access(uint16_t conn, uint16_t attr,
                           struct ble_gatt_access_ctxt *ctxt, void *arg);
+static int chr_cmd_access(uint16_t conn, uint16_t attr,
+                          struct ble_gatt_access_ctxt *ctxt, void *arg);
 
 static const struct ble_gatt_svc_def svcs[] = {
     {
@@ -76,7 +78,9 @@ static int chr_cmd_access(uint16_t conn, uint16_t attr,
     if (!s_dpt_open)
     {
         /* expect DPT_ENTER (0x70) frame carrying the fixture token (payload) */
-        if ((len >= 3u) && (buf[0] == 0xAAu) && (buf[1] == 0x55u) &&
+        if ((len >= (uint16_t)(PROTO_HEADER_LEN + 16u)) &&
+            (buf[0] == 0xAAu) && (buf[1] == 0x55u) &&
+            (buf[2] == PROTO_VER) &&
             (buf[3] == PROTO_CMD_DPT_ENTER) && (buf[5] == 16u))
         {
             memcpy(s_fixture_token, &buf[6], 16u);
@@ -90,6 +94,10 @@ static int chr_cmd_access(uint16_t conn, uint16_t attr,
     /* relay everything else to LINK verbatim (motion 0x7x, aging, ...) */
     {
         proto_frame_t f;
+        if (len < PROTO_HEADER_LEN)
+        {
+            return BLE_ATT_ERR_UNLIKELY;
+        }
         f.ver = buf[2];
         f.cmd = buf[3];
         f.seq = buf[4];

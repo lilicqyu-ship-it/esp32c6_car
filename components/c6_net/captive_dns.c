@@ -64,21 +64,23 @@ static void dns_task(void *arg)
             continue;
         }
         dns_hdr_t *q = (dns_hdr_t *)rx;
-        if ((q->qdcount == 0u) || (q->qdcount > 4u))
+        /* every u16 on the wire is network order: compare in host order */
+        uint16_t qd = lwip_ntohs(q->qdcount);
+        if ((qd == 0u) || (qd > 4u) || ((lwip_ntohs(q->flags) & 0x8000u) != 0u))
         {
-            continue;
+            continue;                            /* empty / absurd / already a response */
         }
 
         /* craft response: copy header + question, set QR/AA, one A answer */
         memcpy(tx, rx, (size_t)n);
         dns_hdr_t *r = (dns_hdr_t *)tx;
-        r->flags   = 0x8180u | 0x0040u;      /* QR=1 AA=1 RD=1 RA=0 RCODE=0 */
-        r->ancount = q->qdcount;             /* one answer per question     */
+        r->flags   = lwip_htons(0x8180u | 0x0040u);  /* QR=1 AA=1 RD=1 RA=0 RCODE=0 */
+        r->ancount = lwip_htons(qd);                 /* one answer per question      */
         r->nscount = 0u;
         r->arcount = 0u;
 
         uint16_t off = (uint16_t)n;
-        for (uint16_t i = 0u; (i < q->qdcount) && ((off + 20u) < sizeof(tx)); i++)
+        for (uint16_t i = 0u; (i < qd) && ((off + 20u) < sizeof(tx)); i++)
         {
             dns_append_name_a(tx, &off, s_ip);
         }

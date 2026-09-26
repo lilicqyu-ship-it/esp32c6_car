@@ -22,8 +22,11 @@ static const char *TAG = "c6_legacy";
 static SemaphoreHandle_t s_peer_mtx;
 static int s_peers[LEGACY_MAX_PEERS] = { -1, -1 };
 
-static void peer_add(int fd)
+/* false when the peer table is full (caller must reject the connection) */
+static bool peer_add(int fd)
 {
+    bool added = false;
+
     if (xSemaphoreTake(s_peer_mtx, portMAX_DELAY) == pdTRUE)
     {
         for (int i = 0; i < LEGACY_MAX_PEERS; i++)
@@ -31,11 +34,13 @@ static void peer_add(int fd)
             if (s_peers[i] < 0)
             {
                 s_peers[i] = fd;
+                added = true;
                 break;
             }
         }
         (void)xSemaphoreGive(s_peer_mtx);
     }
+    return added;
 }
 
 static void peer_del(int fd)
@@ -53,7 +58,8 @@ static void peer_del(int fd)
     }
 }
 
-/* LINK -> all TCP peers: registered as a link tap (mirror only) */
+/* LINK -> all TCP peers: registered as a link tap (mirror only).
+ * Runs in the link_rx task: sends must never block on a stalled peer. */
 static void legacy_tap(const proto_frame_t *f)
 {
     uint8_t wire[PROTO_MAX_FRAME];
@@ -70,7 +76,11 @@ static void legacy_tap(const proto_frame_t *f)
         {
             if (s_peers[i] >= 0)
             {
-                (void)send(s_peers[i], wire, n, 0);
+                ssize_t sent = send(s_peers[i], wire, n, MSG_DONTWAIT);
+                if (sent < 0)
+                {
+                    /* backpressured or dead: drop for this peer, RX path stays live */
+                }
             }
         }
         (void)xSemaphoreGive(s_peer_mtx);
@@ -101,8 +111,9 @@ static void client_task(void *arg)
             }
         }
     }
-    (void)closesocket(fd);
+    /* unregister before close: a reused fd must not be sent stale frames */
     peer_del(fd);
+    (void)closesocket(fd);
     vTaskDelete(NULL);
 }
 
@@ -133,15 +144,22 @@ static void legacy_task(void *arg)
     for (;;)
     {
         int fd = accept(lst, NULL, NULL);
-        if (fd >= 0)
+        if (fd < 0)
         {
-            peer_add(fd);
-            if (xTaskCreate(client_task, "legacy_cli", 3072,
-                            (void *)(intptr_t)fd, 4, NULL) != pdPASS)
-            {
-                (void)closesocket(fd);
-                peer_del(fd);
-            }
+            /* EMFILE etc.: without a pause this loop spins at httpd's cost */
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
+        if (!peer_add(fd))
+        {
+            (void)closesocket(fd);                 /* table full: reject 3rd peer */
+            continue;
+        }
+        if (xTaskCreate(client_task, "legacy_cli", 3072,
+                        (void *)(intptr_t)fd, 4, NULL) != pdPASS)
+        {
+            peer_del(fd);
+            (void)closesocket(fd);
         }
     }
 }
