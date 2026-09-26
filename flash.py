@@ -121,7 +121,8 @@ def common_opts(f):
     return f
 
 
-@click.group(invoke_without_command=True)
+@click.group(invoke_without_command=True,
+             context_settings={"help_option_names": ["-h", "--help"]})
 @click.pass_context
 def cli(ctx):
     """ESP32-C6 flashing helper (c6_car).  No BOOT button needed - the board
