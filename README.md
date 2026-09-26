@@ -66,14 +66,15 @@ idf.py -p PORT flash monitor
 > 发现环境、缺 click 时自动切到 IDF venv 的 Python）。子命令：
 >
 > ```
-> python flash.py               # full（默认）：全量四件套
+> python flash.py build         # 编译（idf.py build，含 assets 自动打包）
+> python flash.py               # full（默认）：全量四件套（bin 缺失时自动先编译）
 > python flash.py assets        # 仅重打包并烧控制页，固件不动
-> python flash.py all -m        # 先 assets 后固件，-m 烧完开串口监视
+> python flash.py all -b -m     # 先 assets 后固件，-b 烧前编译，-m 开串口监视
 > python flash.py mon           # 仅串口监视
 > ```
 >
-> 各命令均支持 `-p COM7` 指定端口（默认 COM14）。`idf.py` 只有在已激活
-> 环境的 PowerShell 里才可用。
+> 各烧录命令均支持 `-p COM7` 指定端口（默认 COM14）、`-b` 烧前编译、
+> `-m` 烧后监视。`idf.py` 只有在已激活环境的 PowerShell 里才可用。
 
 ```powershell
 # ① 全量烧录（新板 / 首次 / 分区表改动后）：引导 + 分区表 + otadata + 固件

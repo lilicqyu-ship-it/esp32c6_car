@@ -2,15 +2,16 @@
 """ESP32-C6 flashing helper - click CLI, pure-Python twin of flash.bat.
 
 Commands:
-  full    bootloader + partition table + otadata + firmware (default)
+  build   compile the firmware (idf.py build)
+  full    flash bootloader + partition table + otadata + firmware (default)
   assets  control page only (repacks assets_src, firmware untouched)
   all     assets first, then full firmware
   mon     serial monitor only (Ctrl+C to exit)
 
 Examples:
   python flash.py                 # same as: full
-  python flash.py all -p COM7 -m  # both images, port COM7, monitor after
-  python flash.py assets          # repack + flash control page only
+  python flash.py build           # compile only
+  python flash.py all -b -m       # build + assets + firmware + monitor
 
 Runs under any Python 3.8+; if `click` is missing the script relaunches
 itself under the ESP-IDF venv interpreter (discovered from EIM metadata),
@@ -32,20 +33,24 @@ EIM_JSON = Path(r"C:\Espressif\tools\eim_idf.json")
 
 
 def find_idf_env():
-    """(venv python, IDF_PATH) from EIM metadata, env vars, then defaults."""
+    """(venv python, IDF_PATH, activation script) from EIM metadata, env vars,
+    then defaults."""
     if EIM_JSON.exists():
         try:
             inst = json.loads(EIM_JSON.read_text(encoding="utf-8"))["idfInstalled"][0]
-            return Path(inst["python"]), Path(inst["path"])
+            return (Path(inst["python"]), Path(inst["path"]),
+                    Path(inst.get("activationScript", "")))
         except (json.JSONDecodeError, KeyError, IndexError, TypeError):
             pass
     venv = os.environ.get("IDF_PYTHON_ENV_PATH")
     idf = os.environ.get("IDF_PATH")
     if venv and idf:
-        return Path(venv) / "Scripts" / "python.exe", Path(idf)
+        return (Path(venv) / "Scripts" / "python.exe", Path(idf),
+                Path(r"C:\Espressif\tools\Microsoft.v6.1-beta1.PowerShell_profile.ps1"))
     return (
         Path(r"C:\Espressif\tools\python\v6.1-beta1\venv\Scripts\python.exe"),
         Path(r"C:\esp\v6.1-beta1\esp-idf"),
+        Path(r"C:\Espressif\tools\Microsoft.v6.1-beta1.PowerShell_profile.ps1"),
     )
 
 
@@ -53,7 +58,7 @@ try:
     import click
 except ImportError:
     if os.environ.get("C6_FLASH_REEXEC") != "1":
-        py, _ = find_idf_env()
+        py, _, _ = find_idf_env()
         if py.exists():
             print(f"[c6] click missing - relaunching under IDF venv: {py}")
             env = dict(os.environ, C6_FLASH_REEXEC="1")
@@ -66,9 +71,29 @@ def run(cmd, **kw):
     return subprocess.run([str(c) for c in cmd], **kw)
 
 
+def run_build():
+    """Compile via idf.py.  On Windows the toolchain PATH lives in the EIM
+    activation script, so the build runs inside an activated PowerShell;
+    elsewhere idf.py is invoked directly."""
+    py, idf, act = find_idf_env()
+    if not (idf / "tools" / "idf.py").exists():
+        sys.exit(f"IDF not found at {idf}")
+    if os.name == "nt" and act.exists():
+        ps = (f"Remove-Item Env:MSYSTEM -ErrorAction SilentlyContinue; "
+              f". '{act}'; Set-Location '{PROJECT}'; idf.py build")
+        r = run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                 "-Command", ps])
+    else:
+        env = dict(os.environ)
+        env.pop("MSYSTEM", None)   # idf.py refuses to run under MSys
+        r = run([py, idf / "tools" / "idf.py", "build"], cwd=PROJECT, env=env)
+    if r.returncode != 0:
+        sys.exit("build failed")
+
+
 def flash_assets(port):
     """Repack assets_src/ and write the assets partition (parttool)."""
-    py, idf = find_idf_env()
+    py, idf, _ = find_idf_env()
     r = run([py, PROJECT / "tools" / "build_assets.py", "assets_src", BUILD / "assets.bin"],
             cwd=PROJECT)
     if r.returncode != 0:
@@ -86,9 +111,10 @@ def flash_full(port):
     build/flash_args carries the flash mode/freq/size line plus the
     offset/image pairs with build-relative paths, hence cwd=BUILD.
     """
-    py, _ = find_idf_env()
+    py, _, _ = find_idf_env()
     if not (BUILD / "c6_car.bin").exists():
-        sys.exit("build/c6_car.bin missing - run `idf.py build` (or `flash.bat full`) first")
+        sys.exit("build/c6_car.bin missing - run `python flash.py build` first "
+                 "or pass -b")
     run([py, "-m", "esptool", "--chip", CHIP, "-p", port, "-b", BAUD,
          "--before=default-reset", "--after=hard-reset",
          "write-flash", "@flash_args"], cwd=BUILD)
@@ -118,6 +144,8 @@ def common_opts(f):
                      help="Serial port.")(f)
     f = click.option("-m", "--monitor", is_flag=True,
                      help="Open the serial monitor after flashing.")(f)
+    f = click.option("-b", "--build", is_flag=True,
+                     help="Compile (idf.py build) before flashing.")(f)
     return f
 
 
@@ -132,10 +160,19 @@ def cli(ctx):
 
 
 @cli.command()
+def build():
+    """Compile the firmware (idf.py build)."""
+    print("[c6] mode=build")
+    run_build()
+
+
+@cli.command()
 @common_opts
-def full(port, monitor):
+def full(port, monitor, build):
     """Flash bootloader + partition table + otadata + firmware."""
     print(f"[c6] mode=full port={port}")
+    if build or not (BUILD / "c6_car.bin").exists():
+        run_build()
     flash_full(port)
     if monitor:
         do_monitor(port)
@@ -143,7 +180,7 @@ def full(port, monitor):
 
 @cli.command()
 @common_opts
-def assets(port, monitor):
+def assets(port, monitor, build):
     """Repack assets_src/ and flash the control page only (firmware untouched)."""
     print(f"[c6] mode=assets port={port}")
     flash_assets(port)
@@ -153,10 +190,12 @@ def assets(port, monitor):
 
 @cli.command(name="all")
 @common_opts
-def all_cmd(port, monitor):
+def all_cmd(port, monitor, build):
     """Flash assets first, then full firmware (one power cycle for the user)."""
     print(f"[c6] mode=all port={port}")
     flash_assets(port)
+    if build or not (BUILD / "c6_car.bin").exists():
+        run_build()
     flash_full(port)
     if monitor:
         do_monitor(port)
