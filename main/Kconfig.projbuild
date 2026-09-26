@@ -16,6 +16,35 @@ menu "c6_car project"
             Requires CONFIG_BT_ENABLED=y (build with sdkconfig.maint or set
             it manually).  Consumer builds keep this off (open question Q3).
 
+    config C6_BENCH_BOD_DISABLE
+        bool "BENCH ONLY: disable brownout detector (weak bench supply)"
+        default n
+        help
+            Brownout fires at Wi-Fi power-up (~400 ms, RF calibration current
+            peak) when the bench supply sags below 2.51 V - the LOWEST
+            threshold level available on ESP32-C6 (SEL_7), so there is no
+            softer step.  This option calls esp_brownout_disable() at the
+            earliest point of app_main.  Risk: flash writes and RF calibration
+            run outside the guaranteed voltage window - bench bring-up only,
+            NEVER for production builds, and fix the supply first if possible.
+
+    config C6_NET_START_DELAY_MS
+        int "Delay before Wi-Fi start (voltage settling, ms)"
+        default 0
+        range 0 5000
+        help
+            Bench mitigation: let the supply recover from the boot surge
+            before the RF power-up peak.  0 = no delay (production default).
+
+    config C6_WIFI_TX_POWER_QDBM
+        int "Max Wi-Fi TX power, 0.25 dBm units (0 = chip default)"
+        default 0
+        range 0 84
+        help
+            Bench mitigation for weak supplies: caps the transmit power and
+            with it the PA current peak (e.g. 40 = 10 dBm).  0 keeps the
+            chip default (~20 dBm) - production stays 0.
+
     config C6_LEGACY_TCP
         bool "Enable TCP 8080 legacy raw-frame bridge"
         default n

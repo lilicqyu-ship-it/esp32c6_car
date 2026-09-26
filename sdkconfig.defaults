@@ -42,7 +42,10 @@ CONFIG_ESP_MAIN_TASK_STACK_SIZE=6144
 
 # ---- brownout + reset semantics ------------------------------------------------------
 CONFIG_ESP_BROWNOUT_DET=y
-CONFIG_ESP_BROWNOUT_DET_LVL_SEL_2_5V=y
+# ESP32-C6 threshold ladder counts DOWN in voltage: SEL_7=2.51V is the LOWEST
+# available level (SEL_2=3.27V).  Keep the default SEL_7 for production; for a
+# weak bench supply use CONFIG_C6_BENCH_BOD_DISABLE=y + the TX-power cap
+# (main/Kconfig.projbuild) instead of touching this line.
 CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT=y
 
 # ---- logging: runtime default WARN (LLDD 7), raise on bench via menuconfig ----------

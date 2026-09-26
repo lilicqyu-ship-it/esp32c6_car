@@ -9,6 +9,7 @@
 
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -65,6 +66,14 @@ static void on_ap_clients(int count)
 
 void app_main(void)
 {
+
+#if CONFIG_C6_BENCH_BOD_DISABLE
+    /* bench supply sags below the lowest C6 threshold (2.51 V) at RF power-up;
+     * disable before the peak - bench bring-up only, production stays protected */
+    extern void esp_brownout_disable(void);
+    esp_brownout_disable();
+    ESP_LOGW(TAG, "BENCH: brownout detector DISABLED (weak supply mode)");
+#endif
     factory_data_t fact;
     bool have_factory = true;
     char ssid[32];
@@ -121,9 +130,19 @@ void app_main(void)
         .channel  = (fact.channel != 0u) ? fact.channel : 6u,
         .max_conn = 4u,
     };
+#if CONFIG_C6_NET_START_DELAY_MS
+    vTaskDelay(pdMS_TO_TICKS(CONFIG_C6_NET_START_DELAY_MS));
+#endif
     if (net_start(&ncfg) == ESP_OK)
     {
         app_state_enter(APP_ONLINE);
+#if CONFIG_C6_WIFI_TX_POWER_QDBM
+        /* bench weak-supply mitigation: cap PA current peak */
+        if (esp_wifi_set_max_tx_power(CONFIG_C6_WIFI_TX_POWER_QDBM) != ESP_OK)
+        {
+            ESP_LOGW(TAG, "set_max_tx_power rejected");
+        }
+#endif
     }
     else
     {

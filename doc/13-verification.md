@@ -74,3 +74,27 @@ cd c6_car/test/host && make check
 # G2（ESP-IDF v6.1-beta1）
 cd c6_car && idf.py build
 ```
+
+## 6. 台架弱电源缓解（真机 bring-up 记录，2026-09）
+
+台架电源在 Wi-Fi 上电（PHY 校准电流峰，约开机 1 s 处）会瞬间跌落到
+ESP32-C6 最低欠压阈值（SEL_7 = 2.51 V）以下，触发 brownout 复位循环。
+`main/Kconfig.projbuild` 提供三个台架专用缓解项（生产构建全部保持默认值）：
+
+| Kconfig | 默认 | 作用 |
+|---|---|---|
+| `C6_BENCH_BOD_DISABLE` | n | app_main 最早处调用 `esp_brownout_disable()`（闪写/RF 校准脱离保证电压窗口，仅台架） |
+| `C6_NET_START_DELAY_MS` | 0 | Wi-Fi 启动前延时，让电源从开机浪涌恢复（台架取 300） |
+| `C6_WIFI_TX_POWER_QDBM` | 0 | 封顶 TX 功率压低 PA 电流峰，0.25 dBm 单位（台架取 48 = 12 dBm） |
+
+注意：ESP32-C6 的欠压阈值阶梯是**降序**的（SEL_7 = 2.51 V 最低，
+SEL_2 = 3.27 V 最高），`sdkconfig.defaults` 中不要写 `..._SEL_2_5V`
+（那是 C3/S 系的写法，对 C6 无效）。
+
+串口抓取辅助工具：`tools/serial_sniff.py`（pyserial，复位 + 带时间戳
+打印启动日志）：
+
+```bash
+idf.py -p COM14 flash
+python tools/serial_sniff.py COM14 30
+```
