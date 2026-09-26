@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>SmartDrive</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <span id="ssid">SmartDrive</span>
+  <span class="dot" id="dot_tc"></span><label>车</label>
+  <span class="dot" id="dot_ws"></span><label>WS</label>
+  <span id="battery">--</span>
+</header>
+<main>
+  <section id="panel">
+    <div class="gauge">
+      <div class="bar"><div id="bar_lt"></div></div>
+      <div class="readout"><span id="v_lt">0</span> mm/s</div>
+      <div class="bar"><div id="bar_lm"></div></div>
+      <label>左轮 目标/实测</label>
+    </div>
+    <div id="state">未连接</div>
+    <div class="gauge">
+      <div class="bar"><div id="bar_rt"></div></div>
+      <div class="readout"><span id="v_rt">0</span> mm/s</div>
+      <div class="bar"><div id="bar_rm"></div></div>
+      <label>右轮 目标/实测</label>
+    </div>
+  </section>
+  <section>
+    <div id="joy"><div id="knob"></div></div>
+    <div class="row">
+      <button id="btn_stop">STOP</button>
+      <button id="btn_pair">配对</button>
+      <span id="rtt">rtt --</span>
+    </div>
+    <div class="row">
+      <span>里程 <span id="odo">0</span> m</span>
+      <span id="ver"></span>
+    </div>
+  </section>
+  <section id="maint">
+    <details>
+      <summary>维护</summary>
+      <div class="row">
+        <input type="file" id="file_c6" accept=".bin">
+        <button id="btn_ota_c6">升级 C6</button>
+      </div>
+      <div class="row">
+        <input type="file" id="file_tc" accept=".bin">
+        <button id="btn_ota_tc">升级 TC275</button>
+      </div>
+      <div id="ota_progress"></div>
+      <div class="row"><a href="/api/diag" target="_blank">诊断 /api/diag</a></div>
+    </details>
+  </section>
+</main>
+<script src="/app.js"></script>
+</body>
+</html>

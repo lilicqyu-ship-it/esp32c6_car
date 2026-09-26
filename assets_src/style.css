@@ -1,0 +1,31 @@
+:root { --bg:#101418; --fg:#e8eef2; --dim:#7c8b96; --ok:#37d67a; --bad:#e5484d; --warn:#f5a623; }
+* { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+body { margin:0; font-family:system-ui,sans-serif; background:var(--bg); color:var(--fg);
+       display:flex; flex-direction:column; height:100dvh; user-select:none; }
+header { display:flex; align-items:center; gap:8px; padding:10px 14px; background:#0a0e12; }
+header #ssid { font-weight:600; margin-right:auto; }
+.dot { width:10px; height:10px; border-radius:50%; background:#333; display:inline-block; }
+.dot.on { background:var(--ok); } .dot.off { background:var(--bad); }
+label { color:var(--dim); font-size:12px; }
+main { flex:1; display:flex; flex-direction:column; padding:10px; gap:12px; overflow:auto; }
+#panel { display:flex; justify-content:space-between; align-items:center; gap:14px; }
+#state { font-size:15px; color:var(--warn); text-align:center; min-width:90px; }
+.gauge { display:flex; flex-direction:column; gap:4px; width:120px; }
+.bar { height:10px; background:#1c242c; border-radius:5px; overflow:hidden; position:relative; }
+.bar>div { position:absolute; top:0; bottom:0; left:50%; width:0; background:var(--ok); }
+.bar>div.neg { left:auto; right:50%; background:var(--warn); }
+.readout { font-variant-numeric:tabular-nums; text-align:center; }
+#joy { width:min(64vw,240px); height:min(64vw,240px); margin:6px auto; border-radius:50%;
+       background:radial-gradient(circle at 50% 40%,#1d2833,#141b22); position:relative;
+       touch-action:none; }
+#knob { width:64px; height:64px; border-radius:50%; background:#2e4152; border:2px solid #46617a;
+        position:absolute; left:calc(50% - 32px); top:calc(50% - 32px); }
+.row { display:flex; align-items:center; gap:10px; justify-content:center; margin:6px 0; }
+button { background:#243447; color:var(--fg); border:1px solid #3a506b; padding:10px 18px;
+         border-radius:10px; font-size:15px; }
+button:active { background:#31485f; }
+#btn_stop { background:#5c1d20; border-color:#e5484d; font-weight:700; }
+input[type=file] { max-width:180px; font-size:12px; color:var(--dim); }
+#maint summary { cursor:pointer; color:var(--dim); text-align:center; }
+#ota_progress { color:var(--warn); font-size:13px; text-align:center; min-height:16px; }
+a { color:#7ab8ff; }
