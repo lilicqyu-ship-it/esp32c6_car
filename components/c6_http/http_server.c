@@ -360,6 +360,16 @@ static int http_send_frame(int fd, const uint8_t *payload, size_t len, bool text
         httpd_sess_update_lru_counter(s_http.hd, fd);
         return 0;
     }
+    /* The peer is not taking frames. ws_sessions_foreach_send bumps this fd's
+     * failure counter on our -1; once it crosses WS_DEAD_CLOSE the peer is gone
+     * for good (a phone that locked / left the AP never sends a WS CLOSE), so
+     * ask httpd to close the socket. That fires http_close_cb, which frees the
+     * session and the lwIP fd - without this the socket leaks on every silent
+     * disconnect until accept() ENFILEs and the page can no longer load. */
+    if (ws_sess_should_close(fd))
+    {
+        (void)httpd_sess_trigger_close(s_http.hd, fd);
+    }
     return -1;
 }
 

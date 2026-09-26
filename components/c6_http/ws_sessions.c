@@ -273,6 +273,23 @@ void ws_sess_send_fail(int fd)
     }
 }
 
+bool ws_sess_should_close(int fd)
+{
+    ws_session_t *s;
+    bool close_it = false;
+
+    if (!ws_ready())
+    {
+        return false;
+    }
+    s = ws_sess_get(fd);
+    if (s != NULL)
+    {
+        close_it = (s->slow_count >= WS_DEAD_CLOSE);
+    }
+    return close_it;
+}
+
 bool ws_sess_skip(int fd, uint32_t tick)
 {
     ws_session_t *s;

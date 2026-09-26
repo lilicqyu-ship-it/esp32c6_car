@@ -15,6 +15,13 @@ extern "C" {
 #define WS_TOKEN_HASH_LEN 16
 #define WS_SLOW_THRESHOLD 3        /* consecutive failed sends before demotion */
 #define WS_SLOW_DIVIDER   4        /* demoted clients get every 4th frame      */
+/* A client that has failed this many consecutive sends is not "slow", it is
+ * gone (phone locked / left the AP / app killed without a WS CLOSE frame).
+ * httpd does not probe an idle WS peer, so nothing would ever free its lwIP
+ * socket - after a few disconnects accept() ENFILEs and the page stops loading.
+ * At the 50 Hz telemetry rate this is ~1 s of undeliverable frames, well past
+ * any transient TCP stall, so the socket is closed and reclaimed. */
+#define WS_DEAD_CLOSE     50u
 
 typedef enum
 {
@@ -63,6 +70,11 @@ bool ws_sess_check_cmd(int fd, uint8_t seq);
 void ws_sess_send_ok(int fd);
 void ws_sess_send_fail(int fd);
 bool ws_sess_skip(int fd, uint32_t tick);    /* true = no telemetry this tick */
+
+/* True when a socket has failed WS_DEAD_CLOSE consecutive sends: the peer is
+ * gone and its socket must be closed by the caller (httpd_sess_trigger_close)
+ * so the lwIP fd is reclaimed instead of leaking on every phone disconnect. */
+bool ws_sess_should_close(int fd);
 
 /* Pacing send used by ws_broadcast_binary: snapshot the ws sessions, then for
  * each: skip-check (slow/dead client) -> send -> bookkeeping.  Returns the

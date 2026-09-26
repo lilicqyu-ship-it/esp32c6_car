@@ -145,7 +145,12 @@ static void regs_publish(void)
 
 static void irq_set(bool high)
 {
-    /* open-drain: drive 1 = release (external 10k pulls up) */
+    /* Open-drain: drive 0 = assert (pull low), drive 1 = release (high-Z).
+     * The boards are jumper wires only with no external pull-up (22 §3.2 /
+     * §9.3), so the released-high level is held by the TC275 P23.0 internal
+     * pull-up alone - slow-riding and noisy. The master samples this level,
+     * never counts edges, and never treats "high" as "slave present";
+     * liveness is SF_ALIVE only. */
     gpio_set_level(CONFIG_C6_LINK_SPI_IRQ_GPIO, high ? 1u : 0u);
 }
 
@@ -913,10 +918,17 @@ esp_err_t link_init(void)
     }
 
     /* IRQ: open-drain output, low until data is pending */
+    /* IRQ line: open-drain, low = data pending, released = high.
+     * Wiring is jumper wires only, no external pull-up resistor (22 §3.2 /
+     * §9.3). The far-end TC275 P23.0 has its own internal pull-up, but that is
+     * weak over a jumper lead, so enable this pin's internal pull-up too: on an
+     * open-drain output it does not fight the low drive (a low still wins) and
+     * it stiffens the released-high level and cleans up the rising edge. */
     gpio_config_t io = { 0 };
     io.pin_bit_mask = 1ULL << CONFIG_C6_LINK_SPI_IRQ_GPIO;
     io.mode         = GPIO_MODE_OUTPUT_OD;
-    io.pull_up_en   = GPIO_PULLUP_DISABLE;           /* external 10k (22 §3.2) */
+    io.pull_up_en   = GPIO_PULLUP_ENABLE;            /* no external pull-up: rely
+                                                      * on internal pull-ups     */
     err = gpio_config(&io);
     if (err != ESP_OK)
     {

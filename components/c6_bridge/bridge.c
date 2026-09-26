@@ -76,6 +76,8 @@ typedef struct
 
     volatile bool link_up;
     uint8_t  last_link_state_sent;
+    bool     tc_on_sent;                     /* last "car online" pushed to page */
+    bool     tc_on_valid;                    /* false until the first push       */
 } bridge_ctx_t;
 
 static bridge_ctx_t s_br;
@@ -118,9 +120,17 @@ static void bridge_send_link_state(void)
     }
 }
 
+/* A WS session changed (new client connected, or one left). The hello frame
+ * always tells the page "tc: down" (http_server has no link visibility), so a
+ * phone that connects AFTER the link is already up would otherwise stay grey
+ * until the next link edge - which may never come on a stable link. Broadcast
+ * the current car-online state now so a freshly connected page turns green
+ * immediately. Idempotent for clients that already had the right state. */
 void bridge_notify_clients(void)
 {
     bridge_send_link_state();
+    http_broadcast_ctl(link_is_up() ? "{\"t\":\"tc\",\"on\":true}"
+                                     : "{\"t\":\"tc\",\"on\":false}");
 }
 
 void bridge_notify_pair(void)
@@ -611,25 +621,63 @@ static void pump_link_frame(const proto_frame_t *f)
     }
 }
 
+/* Broadcast the "car online" state to the page and mirror LINK_STATE to the
+ * TC275, but only on a real edge (tracked by s_br.tc_on_sent). Idempotent:
+ * safe to call from both the event handler and the 20 ms reconcile tick. */
+static void bridge_publish_car_online(bool on)
+{
+    s_br.link_up = on;
+    s_br.last_link_state_sent = 0xFFu;      /* force LINK_STATE resend */
+    bridge_send_link_state();
+
+    if (s_br.tc_on_valid && (s_br.tc_on_sent == on))
+    {
+        return;                             /* page already knows this state */
+    }
+    s_br.tc_on_valid = true;
+    s_br.tc_on_sent  = on;
+    http_broadcast_ctl(on ? "{\"t\":\"tc\",\"on\":true}"
+                          : "{\"t\":\"tc\",\"on\":false}");
+}
+
+/* Periodic reconcile (20 ms tick). The LINK_EV_UP event is edge-triggered and
+ * fires exactly once; if the bridge task had not yet joined the event queue
+ * when the link came up (a boot-order race between the two boards powering up
+ * at different times), that single event is lost and the page stays grey while
+ * telemetry actually flows. Reconciling against link_is_up() every tick makes
+ * the "car online" light self-heal within one tick regardless of boot order or
+ * a dropped event - state is derived, never assumed from a one-shot signal. */
+static void bridge_reconcile_link_state(void)
+{
+    bool up = link_is_up();
+
+    if (!s_br.tc_on_valid || (up != s_br.tc_on_sent))
+    {
+        if (!up && s_br.link_up)
+        {
+            /* falling edge also tears down any relay in flight */
+            relay_lock();
+            relay_abort_send();
+            relay_reset_nolock();
+            relay_unlock();
+        }
+        bridge_publish_car_online(up);
+    }
+}
+
 static void pump_link_event(const link_event_t *ev)
 {
     switch (ev->id)
     {
         case LINK_EV_UP:
-            s_br.link_up = true;
-            s_br.last_link_state_sent = 0xFFu;  /* force resend */
-            bridge_send_link_state();
-            http_broadcast_ctl("{\"t\":\"tc\",\"on\":true}");
+            bridge_publish_car_online(true);
             break;
         case LINK_EV_DOWN:
-            s_br.link_up = false;
             relay_lock();
             relay_abort_send();
             relay_reset_nolock();
             relay_unlock();
-            s_br.last_link_state_sent = 0xFFu;
-            bridge_send_link_state();
-            http_broadcast_ctl("{\"t\":\"tc\",\"on\":false}");
+            bridge_publish_car_online(false);
             break;
         default:
             break;
@@ -699,6 +747,7 @@ static void bridge_task(void *arg)
             /* 20 ms pacing tick: mailbox drain + relay watchdog */
             broadcast_telemetry();
             relay_tick();
+            bridge_reconcile_link_state();   /* self-heal "car online" (boot race) */
             bridge_send_link_state();   /* retry edges dropped earlier by BUSY */
         }
         (void)esp_task_wdt_reset();
