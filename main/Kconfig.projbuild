@@ -1,0 +1,26 @@
+menu "c6_car project"
+
+    config C6_FACTORY_DEV_OVERRIDE
+        bool "BENCH ONLY: synthesize factory data when NVS is empty"
+        default y
+        help
+            Lets a bench board come up as SD-DEV000 with a fixed password when
+            no production provisioning was written.  MUST be disabled (n) for
+            production builds (LLDD 4.1 FACTORY_WAIT semantics).
+
+    config C6_MAINT_BLE
+        bool "Enable BLE DPT maintenance channel (NimBLE)"
+        default n
+        help
+            LLDD 4.9: NimBLE GATT service for the production fixture.
+            Requires CONFIG_BT_ENABLED=y (build with sdkconfig.maint or set
+            it manually).  Consumer builds keep this off (open question Q3).
+
+    config C6_LEGACY_TCP
+        bool "Enable TCP 8080 legacy raw-frame bridge"
+        default n
+        help
+            LLDD FR-10: proto v2 frames over TCP 8080 for demo clients.
+            Recommended only for the first production batches (Q4).
+
+endmenu
