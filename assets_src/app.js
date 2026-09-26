@@ -41,13 +41,21 @@ function wsUrl() {
   const p = (location.protocol === "https:") ? "wss://" : "ws://";
   return p + location.host + "/ws" + (state.token ? ("?token=" + state.token) : "");
 }
+let wsBackoff = 1000;
 function connect() {
   state.ws = new WebSocket(wsUrl());
   state.ws.binaryType = "arraybuffer";
-  state.ws.onopen = () => { $("dot_ws").className = "dot on"; sendDrive(0, 0); };
+  state.ws.onopen = () => {
+    wsBackoff = 1000;
+    $("dot_ws").className = "dot on";
+    sendDrive(0, 0);
+  };
   state.ws.onclose = () => {
     $("dot_ws").className = "dot off"; state.ctrl = false;
-    setTimeout(connect, 1000);
+    // fixed 1 s retries churn sockets on the device while it is struggling;
+    // back off so recovery is not fought by the page itself
+    setTimeout(connect, wsBackoff);
+    wsBackoff = Math.min(wsBackoff * 2, 8000);
   };
   state.ws.onmessage = (ev) => {
     if (typeof ev.data === "string") { onCtl(JSON.parse(ev.data)); return; }
@@ -58,9 +66,9 @@ function connect() {
   };
 }
 
+let errT = 0;                     /* pending "错误:" auto-clear timer */
 function onCtl(m) {
-  if (m.t === "hello") {
-    state.ctrl = (m.role === "ctrl");
+  if (m.t === "hello") {    state.ctrl = (m.role === "ctrl");
     $("ver").textContent = "fw " + m.ver;
   } else if (m.t === "tc") {
     state.tc = !!m.on;
@@ -73,7 +81,13 @@ function onCtl(m) {
   } else if (m.t === "otaerror") {
     $("ota_progress").textContent = "OTA 失败 " + m.e;
   } else if (m.t === "err") {
+    // transient hiccup (e.g. command queue momentarily full): show it, then
+    // let the state line recover instead of latching a stale error forever
     $("state").textContent = "错误: " + m.e;
+    clearTimeout(errT);
+    errT = setTimeout(() => {
+      $("state").textContent = state.tc ? "待命" : "车端未连接";
+    }, 3000);
   }
 }
 

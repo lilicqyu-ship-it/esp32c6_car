@@ -31,7 +31,12 @@ CONFIG_ESP_COREDUMP_MAX_TASKS_NUM=16
 # captive DNS pulls every phone-app background probe into httpd; 16 sockets
 # ENFILEd under one phone (CNA webview + browser + app probes), keep headroom
 CONFIG_LWIP_MAX_SOCKETS=24
+CONFIG_LWIP_MAX_ACTIVE_TCP=20
 CONFIG_LWIP_SO_REUSE=y
+# IDF default MSL=60 s parks every actively-closed socket in TIME_WAIT for
+# 2*MSL = 2 min; a few page refreshes exhaust the tcp-pcb pool and the page
+# stops loading until they age out. 20 s TIME_WAIT is plenty on a softAP.
+CONFIG_LWIP_TCP_MSL=10000
 CONFIG_ESP_WIFI_NVS_ENABLED=y
 
 # ---- RTOS / watchdogs (LLDD 2.3 / 4.10) --------------------------------------------
