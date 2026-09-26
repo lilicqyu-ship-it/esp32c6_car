@@ -1,0 +1,59 @@
+# CI: host unit tests + firmware build against sdkconfig.defaults
+# (the local dev sdkconfig is untracked/bench-flavored on purpose - CI is the
+# production-flavor gate; releases are cut from the same defaults).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host-tests:
+    name: Host unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and run host tests
+        run: make -C test/host check
+
+  firmware:
+    name: Firmware build (IDF v6.1-beta1)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # no PROJECT_VER override: git describe feeds it
+
+      - name: Cache ESP-IDF v6.1-beta1 and toolchain
+        id: idf
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/esp-idf
+            ~/.espressif
+          key: idf-v6.1-beta1-esp32c6
+
+      - name: Install ESP-IDF v6.1-beta1 (esp32c6 target only)
+        if: steps.idf.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch v6.1-beta1 \
+            --recurse-submodules --shallow-submodules \
+            https://github.com/espressif/esp-idf.git ~/esp-idf
+          ~/esp-idf/install.sh esp32c6
+
+      - name: Build
+        run: |
+          . ~/esp-idf/export.sh
+          idf.py build
+
+      - name: Report
+        run: |
+          echo "version: $(git describe --tags --dirty)"
+          ls -la build/c6_car.bin build/assets.bin
