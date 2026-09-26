@@ -623,6 +623,7 @@ esp_err_t http_start(void)
 
     strncpy(s_http.fw_ver, app->version, sizeof(s_http.fw_ver) - 1u);
     cfg.max_open_sockets   = 8;
+    cfg.max_uri_handlers   = (uint8_t)(sizeof(uris) / sizeof(uris[0]));
     cfg.stack_size         = 8192;
     cfg.lru_purge_enable   = true;
     cfg.recv_wait_timeout  = 10;
