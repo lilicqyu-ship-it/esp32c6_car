@@ -96,7 +96,18 @@ typedef struct
     /* health */
     link_health_t health;
     uint32_t last_host_ev1, last_host_ev2;           /* poll cadence est.   */
+    uint32_t host_ev_total;                          /* bench diag: any master transaction seen at all */
+    /* bench diag: per-callback ISR counts, incremented in the ISR itself so
+     * they are NOT lost to the bool-flag merge that host_ev_total suffers.
+     * cb_tx = master RDBUF (reads our regs), cb_rx = master WRBUF (GEN slot),
+     * sent = a queued TX DMA seg went out, recv = a queued RX DMA seg filled. */
+    volatile uint32_t isr_buftx, isr_bufrx, isr_sent, isr_recv;
     uint8_t  seq_tx, seq_rx_last;                    /* per-direction SEQ   */
+    bool     seq_synced;                             /* false until the first
+                                                       master frame locks the
+                                                       window (myCar's parser
+                                                       has the same guard:
+                                                       haveLastSeq)         */
     bool     up_reported;
     bool     silent;                                 /* GEN silence mode    */
 
@@ -147,6 +158,7 @@ static void link_note_host_event(void)
     s_link.last_host_ev2 = s_link.last_host_ev1;
     s_link.last_host_ev1 = now;
     s_link.health.last_rx_ms = now;
+    s_link.host_ev_total++;
 
     if (!s_link.up_reported)
     {
@@ -404,7 +416,16 @@ static void link_handle_rx_segment(const uint8_t *data, size_t len)
         {
             case SF_RX_FRAME:
                 s_link.crc_run = 0u;
-                if (!sf_seq_ok(sf.seq, &s_link.seq_rx_last))
+                if (!s_link.seq_synced)
+                {
+                    /* First frame of the stream (boot, or after GEN reset):
+                     * the master's counter keeps running across our resets, so
+                     * there is no meaningful window yet - lock onto this seq
+                     * instead of rejecting seq==last as a replay. */
+                    s_link.seq_rx_last = sf.seq;
+                    s_link.seq_synced  = true;
+                }
+                else if (!sf_seq_ok(sf.seq, &s_link.seq_rx_last))
                 {
                     s_link.seq_errs_total++;
                     s_link.health.seq_errs++;
@@ -495,6 +516,7 @@ static void link_handle_gen(void)
         case SF_GEN_RESET_LINK:
             sf_parser_init(&s_link.parser);
             s_link.seq_rx_last = 0u;
+            s_link.seq_synced  = false;
             break;
         case SF_GEN_SILENCE_ON:
             s_link.silent = true;
@@ -525,6 +547,7 @@ static bool IRAM_ATTR cb_sent(void *arg, spi_slave_hd_event_t *e, int *awoken)
     BaseType_t hpw = pdFALSE;
 
     (void)e;
+    L->isr_sent++;
     L->tx_done_notif = true;
     L->host_event_notif = true;
     vTaskNotifyGiveFromISR(L->task, &hpw);
@@ -538,6 +561,7 @@ static bool IRAM_ATTR cb_recv(void *arg, spi_slave_hd_event_t *e, int *awoken)
     BaseType_t hpw = pdFALSE;
 
     (void)e;
+    L->isr_recv++;
     L->rx_done_notif = true;
     L->host_event_notif = true;
     vTaskNotifyGiveFromISR(L->task, &hpw);
@@ -552,6 +576,7 @@ static bool IRAM_ATTR cb_buffer_tx(void *arg, spi_slave_hd_event_t *e, int *awok
     BaseType_t hpw = pdFALSE;
 
     (void)e;
+    L->isr_buftx++;
     L->host_event_notif = true;
     vTaskNotifyGiveFromISR(L->task, &hpw);
     *awoken = (hpw == pdTRUE);
@@ -565,6 +590,7 @@ static bool IRAM_ATTR cb_buffer_rx(void *arg, spi_slave_hd_event_t *e, int *awok
     BaseType_t hpw = pdFALSE;
 
     (void)e;
+    L->isr_bufrx++;
     L->host_event_notif = true;
     L->gen_notif = true;
     vTaskNotifyGiveFromISR(L->task, &hpw);
@@ -673,6 +699,28 @@ static void link_task(void *arg)
                 L->health.rtt_ms =
                     (uint16_t)((L->last_host_ev1 - L->last_host_ev2) & 0xFFFFu);
             }
+
+            /* Bench bring-up diagnostic (myCar LINKDBG counterpart): the single
+             * most useful fact is whether the master's SPI transactions reach
+             * this slave at all. host_ev counts every CS-driven callback
+             * (RDBUF/WRBUF/RDDMA/WRDMA); if it stays 0 the wire from the master
+             * (CS/SCLK/MOSI/GND) is not getting here - nothing on this side can
+             * fix that. up=1 means the 500 ms watchdog is fed. */
+            ESP_LOGI(TAG,
+                     "SPIDBG host_ev=%lu up=%d rx=%lu tx=%lu crc=%lu fmt=%lu seq=%lu "
+                     "| isr rdbuf=%lu wrbuf=%lu rddma=%lu wrdma=%lu tx_infl=%d",
+                     (unsigned long)L->host_ev_total,
+                     (int)L->up_reported,
+                     (unsigned long)L->health.frames_rx,
+                     (unsigned long)L->frames_tx_total,
+                     (unsigned long)L->crc_errs_total,
+                     (unsigned long)L->fmt_errs_total,
+                     (unsigned long)L->seq_errs_total,
+                     (unsigned long)L->isr_buftx,
+                     (unsigned long)L->isr_bufrx,
+                     (unsigned long)L->isr_recv,
+                     (unsigned long)L->isr_sent,
+                     (int)L->tx_in_flight);
         }
 
         (void)esp_task_wdt_reset();

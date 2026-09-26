@@ -79,3 +79,6 @@ Desktop.ini
 
 # 例外：内嵌验签公钥必须入库（tools/keys 种子不在此列，按需自行管控）
 !components/c6_ota/keys/*.bin
+
+# Codegraph 索引缓存
+.codegraph/
