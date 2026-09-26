@@ -28,7 +28,9 @@ CONFIG_ESP_COREDUMP_CHECKSUM_CRC32=y
 CONFIG_ESP_COREDUMP_MAX_TASKS_NUM=16
 
 # ---- networking budget -----------------------------------------------------------
-CONFIG_LWIP_MAX_SOCKETS=16
+# captive DNS pulls every phone-app background probe into httpd; 16 sockets
+# ENFILEd under one phone (CNA webview + browser + app probes), keep headroom
+CONFIG_LWIP_MAX_SOCKETS=24
 CONFIG_LWIP_SO_REUSE=y
 CONFIG_ESP_WIFI_NVS_ENABLED=y
 

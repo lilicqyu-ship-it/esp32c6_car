@@ -600,6 +600,17 @@ void http_set_diag_provider(http_diag_fn fn)
     s_http.diag_fn = fn;
 }
 
+/* captive-portal catch-all: phone CNA probes (/hotspot-detect.html,
+ * /generate_204, ...) and app background POSTs land here via the wildcard
+ * matcher and get bounced to the control page - that redirect is what makes
+ * iOS/Android pop the portal.  The AP IP is fixed by c6_net. */
+static esp_err_t portal_redirect(httpd_req_t *req)
+{
+    httpd_resp_set_status(req, "302 Found");
+    httpd_resp_set_hdr(req, "Location", "http://192.168.4.1/");
+    return httpd_resp_send(req, NULL, 0);
+}
+
 esp_err_t http_start(void)
 {
     const esp_app_desc_t *app = esp_app_get_description();
@@ -619,12 +630,19 @@ esp_err_t http_start(void)
         { .uri = "/ws",        .method = HTTP_GET,  .handler = ws_handler,
           .is_websocket = true, .handle_ws_control_frames = true,
           .ws_pre_handshake_cb = ws_pre_handshake },
+        /* catch-all must stay LAST: with the wildcard matcher the first
+         * registered match wins, exact entries above shadow these */
+        { .uri = "/*",         .method = HTTP_GET,  .handler = portal_redirect },
+        { .uri = "/*",         .method = HTTP_POST, .handler = portal_redirect },
     };
 
     strncpy(s_http.fw_ver, app->version, sizeof(s_http.fw_ver) - 1u);
-    cfg.max_open_sockets   = 8;
+    /* CNA webview + browser + app probes hit httpd concurrently on one phone;
+     * keep above lwip pool headroom so LRU purge, not ENFILE, absorbs bursts */
+    cfg.max_open_sockets   = 10;
     cfg.max_uri_handlers   = (uint8_t)(sizeof(uris) / sizeof(uris[0]));
     cfg.stack_size         = 8192;
+    cfg.uri_match_fn       = httpd_uri_match_wildcard;
     cfg.lru_purge_enable   = true;
     cfg.recv_wait_timeout  = 10;
     cfg.send_wait_timeout  = 10;
