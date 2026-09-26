@@ -59,7 +59,11 @@ idf.py -p PORT flash monitor
 
 ## 烧录方法
 
-按目标分四种，均走 USB 串口（板载自动下载电路，**无需按 BOOT 键**，烧完自动复位运行）：
+按目标分四种，均走 USB 串口（板载自动下载电路，**无需按 BOOT 键**，烧完自动复位运行）。
+
+> **捷径**：不想激活 IDF 环境时，在普通 CMD / 资源管理器里直接运行项目根目录的
+> `flash.bat`（默认 COM14；`flash.bat COM7` 指定端口，`flash.bat COM14 mon`
+> 烧完顺便看日志）。`idf.py` 只有在已激活环境的 PowerShell 里才可用。
 
 ```powershell
 # ① 全量烧录（新板 / 首次 / 分区表改动后）：引导 + 分区表 + otadata + 固件
