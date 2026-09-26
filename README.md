@@ -105,10 +105,16 @@ python -m esptool --chip esp32c6 -p PORT -b 460800 write-flash @build/flash_args
 
 空 assets 分区时 `/` 回退固件内嵌极简页。正式页面：
 
+- `idf.py build` **已自动打包**：assets_src/* 变化时增量产出 `build/assets.bin`
+  （根 CMakeLists 的 `c6_assets` 目标）；
+- 烧录是独立步骤（写 assets 分区）：
+
 ```bash
-python tools/build_assets.py                     # assets_src → build/assets.bin
 parttool.py -p PORT write_partition --partition-name=assets --input build/assets.bin
+# 或直接用一键工具：flash.bat assets / python flash.py assets
 ```
+
+（脱离 IDF 环境时手动打包：`python tools/build_assets.py assets_src build/assets.bin`）
 
 ## 固件签名（/ota/c6）
 
