@@ -67,6 +67,18 @@ static void on_ap_clients(int count)
 
 void app_main(void)
 {
+    /* bench: the serial capture often misses the panic banner because the
+     * USB-Serial-JTAG re-enumerates at the reset itself - name the previous
+     * life here instead (ESP_RST_UNKNOWN/POWERON/SW/PANIC/INT_WDT/TASK_WDT/
+     * WDT/BROWNOUT/...) so every reboot carries its own evidence */
+    ESP_LOGI(TAG, "last reset reason=%d (%s)", esp_reset_reason(),
+             (esp_reset_reason() == ESP_RST_PANIC)      ? "panic" :
+             (esp_reset_reason() == ESP_RST_INT_WDT)    ? "int_wdt" :
+             (esp_reset_reason() == ESP_RST_TASK_WDT)   ? "task_wdt" :
+             (esp_reset_reason() == ESP_RST_WDT)        ? "rtc_wdt" :
+             (esp_reset_reason() == ESP_RST_BROWNOUT)   ? "brownout" :
+             (esp_reset_reason() == ESP_RST_POWERON)    ? "poweron" :
+             (esp_reset_reason() == ESP_RST_SW)         ? "sw" : "other");
 
 #if CONFIG_C6_BENCH_BOD_DISABLE
     /* bench supply sags below the lowest C6 threshold (2.51 V) at RF power-up;
