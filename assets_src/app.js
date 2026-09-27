@@ -30,6 +30,8 @@ function i16le(v) { v = Math.max(-32768, Math.min(32767, v|0)); return u16le(v &
 
 /* ---- state ---- */
 const $ = (id) => document.getElementById(id);
+/* state line text + tone (CSS: .state[data-tone=ok|warn|bad|dim]) */
+function setState(msg, tone) { $("state").textContent = msg; $("state").dataset.tone = tone; }
 const state = {
   token: sessionStorage.getItem("sd_token") || new URLSearchParams(location.search).get("token") || "",
   ws: null, ctrl: false, tc: false,
@@ -73,20 +75,23 @@ function onCtl(m) {
   } else if (m.t === "tc") {
     state.tc = !!m.on;
     $("dot_tc").className = "dot " + (m.on ? "on" : "off");
-    $("state").textContent = m.on ? "待命" : "车端未连接";
+    setState(m.on ? "待命" : "车端未连接", m.on ? "ok" : "dim");
   } else if (m.t === "otastatus") {
     $("ota_progress").textContent = "OTA " + m.pct + "%";
+    $("ota_bar").style.width = Math.max(0, Math.min(100, m.pct)) + "%";
   } else if (m.t === "otaswap") {
     $("ota_progress").textContent = "TC275 切槽重启...";
+    $("ota_bar").style.width = "100%";
   } else if (m.t === "otaerror") {
     $("ota_progress").textContent = "OTA 失败 " + m.e;
+    $("ota_bar").style.width = "0%";
   } else if (m.t === "err") {
     // transient hiccup (e.g. command queue momentarily full): show it, then
     // let the state line recover instead of latching a stale error forever
-    $("state").textContent = "错误: " + m.e;
+    setState("错误: " + m.e, "warn");
     clearTimeout(errT);
     errT = setTimeout(() => {
-      $("state").textContent = state.tc ? "待命" : "车端未连接";
+      setState(state.tc ? "待命" : "车端未连接", state.tc ? "ok" : "dim");
     }, 3000);
   }
 }
@@ -103,12 +108,13 @@ function onTelemetry(p) {
   setBar("bar_lt", tl, 800); setBar("bar_lm", ml, 800);
   setBar("bar_rt", tr, 800); setBar("bar_rm", mr, 800);
   $("v_lt").textContent = ml; $("v_rt").textContent = mr;
-  $("battery").textContent = pct + "% " + dv(19) / 1000 + "V";
-  $("battery").style.color = pct <= 10 ? "var(--bad)" : pct <= 20 ? "var(--warn)" : "var(--ok)";
+  $("batt_pct").textContent = pct + "%";
+  $("batt_v").textContent = (dv(19) / 1000).toFixed(2) + "V";
+  $("batt_pill").style.color = pct <= 10 ? "var(--bad)" : pct <= 20 ? "var(--warn)" : "var(--ok)";
   $("odo").textContent = (d32(26) / 1000).toFixed(1);
   $("rtt").textContent = "rtt " + dv(30) + "ms";
-  if (fault) { $("state").textContent = "故障 0x" + fault.toString(16); $("state").style.color = "var(--bad)"; }
-  else { $("state").textContent = state.tc ? "待命" : "车端未连接"; $("state").style.color = "var(--warn)"; }
+  if (fault) setState("故障 0x" + fault.toString(16), "bad");
+  else setState(state.tc ? "待命" : "车端未连接", state.tc ? "ok" : "dim");
 }
 function setBar(id, v, full) {
   const el = $(id); const w = Math.min(50, Math.abs(v) / full * 50);
@@ -119,20 +125,32 @@ function setBar(id, v, full) {
 
 /* ---- speedometer: body speed = mean of measured wheel speeds (mm/s) ----
  * signed average -> in-place rotation reads 0; km/h with 1 decimal because
- * full joystick deflection is only 600 mm/s = 2.2 km/h. */
+ * full joystick deflection is only 600 mm/s = 2.2 km/h.  The display value is
+ * a dt-aware EMA (tau 150 ms): one 0.1 km/h digit is ~28 mm/s, so raw 50 Hz
+ * readings flicker the digit constantly and the direction line flaps near
+ * zero.  Snap instead of ramp on the first frame, after a transmission gap,
+ * and whenever crossing in/out of rest. */
 const STOP_MM_S = 30;                          /* < 0.1 km/h counts as stopped */
-let teleTs = 0;
+const SPEED_TAU_MS = 150;                      /* EMA time constant */
+let teleTs = 0, dispV = 0, dispSeeded = false;
 const speedCache = { v: "", d: "" };
 function renderSpeed(ml, mr) {
-  teleTs = Date.now();
+  const now = Date.now();
+  const dt = teleTs ? Math.min(1000, now - teleTs) : 0;
+  teleTs = now;
   const v = (ml + mr) / 2;
-  const stopped = Math.abs(v) < STOP_MM_S;
-  const sv = stopped ? "0.0" : (Math.abs(v) * 0.0036).toFixed(1);
-  const dir = stopped ? "" : (v > 0 ? "▲ 前进" : "▼ 倒车");
+  if (!dispSeeded || dt > 400 || Math.abs(v) < STOP_MM_S) {
+    dispV = v; dispSeeded = true;
+  } else {
+    dispV += (v - dispV) * (1 - Math.exp(-dt / SPEED_TAU_MS));
+  }
+  const stopped = Math.abs(dispV) < STOP_MM_S;
+  const sv = stopped ? "0.0" : (Math.abs(dispV) * 0.0036).toFixed(1);
+  const dir = stopped ? "" : (dispV > 0 ? "▲ 前进" : "▼ 倒车");
   if (sv !== speedCache.v) { $("speed_val").textContent = sv; speedCache.v = sv; }
   if (dir !== speedCache.d) {
     $("speed_dir").textContent = dir || "\u00a0";
-    $("speed_dir").className = stopped ? "" : (v > 0 ? "fwd" : "rev");
+    $("speed_dir").className = stopped ? "" : (dispV > 0 ? "fwd" : "rev");
     speedCache.d = dir;
   }
   $("speed_val").classList.remove("stale");
@@ -144,6 +162,7 @@ setInterval(() => {
   if (Date.now() - teleTs <= 1000 || teleTs === 0) return;
   if (speedCache.v !== "--") {
     speedCache.v = "--"; speedCache.d = "";
+    dispSeeded = false;                        /* resync snaps on next frame */
     $("speed_val").textContent = "--";
     $("speed_val").classList.add("stale");
     $("speed_dir").textContent = "\u00a0";
@@ -162,7 +181,7 @@ function joyMove(ev) {
   const r = joy.getBoundingClientRect();
   const t = ev.touches ? ev.touches[0] : ev;
   let dx = t.clientX - (r.left + r.width / 2), dy = t.clientY - (r.top + r.height / 2);
-  const max = r.width / 2 - 34, len = Math.hypot(dx, dy);
+  const max = r.width / 2 - knob.offsetWidth / 2 - 2, len = Math.hypot(dx, dy);
   if (len > max) { dx *= max / len; dy *= max / len; }
   knob.style.transform = `translate(${dx}px,${dy}px)`;
   state.joyV = Math.round(-dy / max * 600);       // mm/s, up = forward
@@ -173,8 +192,9 @@ function joyEnd() {
 }
 ["pointerdown", "pointermove", "pointerup", "pointerleave"].forEach((e) => {
   joy.addEventListener(e, (ev) => {
-    if (e === "pointerdown") joy.setPointerCapture(ev.pointerId);
-    if (e === "pointerup" || e === "pointerleave") joyEnd(); else joyMove(ev);
+    if (e === "pointerdown") { joy.setPointerCapture(ev.pointerId); joy.classList.add("active"); }
+    if (e === "pointerup" || e === "pointerleave") { joyEnd(); joy.classList.remove("active"); }
+    else joyMove(ev);
   });
 });
 setInterval(() => sendDrive(state.joyV, state.joyW), 33);   // 30 Hz, doubles as heartbeat
@@ -185,10 +205,10 @@ $("btn_pair").onclick = async () => {
   const j = await r.json();
   if (j.ok && j.token) {
     state.token = j.token; sessionStorage.setItem("sd_token", j.token);
-    $("state").textContent = "已配对 (控制端)";
+    setState("已配对 (控制端)", "ok");
     if (state.ws) state.ws.close();
   } else {
-    $("state").textContent = "配对失败: " + (j.hint || j.e || "先按车侧键3秒");
+    setState("配对失败: " + (j.hint || j.e || "先按车侧键3秒"), "warn");
   }
 };
 
@@ -201,17 +221,24 @@ async function upload(file, uri, btn) {
       { method: "POST", body: file });
     const j = await r.json();
     $("ota_progress").textContent = j.ok ? "完成，设备将重启" : "失败 " + j.e;
-  } catch (e) { $("ota_progress").textContent = "上传中断"; }
+    $("ota_bar").style.width = j.ok ? "100%" : "0%";
+  } catch (e) { $("ota_progress").textContent = "上传中断"; $("ota_bar").style.width = "0%"; }
   btn.disabled = false;
 }
 $("btn_ota_c6").onclick = () => upload($("file_c6").files[0], "/ota/c6", $("btn_ota_c6"));
 $("btn_ota_tc").onclick = () => upload($("file_tc").files[0], "/ota/tc275", $("btn_ota_tc"));
 
+/* picked firmware name inside the styled drop label */
+[["file_c6", "lbl_c6", "选择 C6 固件 (.bin)"],
+ ["file_tc", "lbl_tc", "选择 TC275 固件 (.bin)"]].forEach(([f, l, d]) => {
+  $(f).addEventListener("change", () => { $(l).textContent = $(f).files[0] ? $(f).files[0].name : d; });
+});
+
 /* ---- stop ---- */
 $("btn_stop").onclick = () => sendDrive(0, 0);
 
 fetch("/api/health").then((r) => r.json()).then((j) => {
-  $("ssid").textContent = "SmartDrive " + j.ver;
+  $("ssid").textContent = "SmartDrive";
   $("ver").textContent = "fw " + j.ver;
 }).catch(() => {});
 connect();

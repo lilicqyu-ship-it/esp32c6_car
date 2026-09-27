@@ -2,63 +2,87 @@
 <html lang="zh">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
-<title>SmartDrive</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#0b0f14">
+<title>SmartDrive 控制台</title>
+<link rel="icon" type="image/svg+xml" href="/logo.svg">
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
 <header>
-  <span id="ssid">SmartDrive</span>
-  <span class="dot" id="dot_tc"></span><label>车</label>
-  <span class="dot" id="dot_ws"></span><label>WS</label>
-  <span id="battery">--</span>
+  <img class="logo" src="/logo.svg" alt="">
+  <div class="brand">
+    <b id="ssid">SmartDrive</b>
+    <span id="ver">--</span>
+  </div>
+  <div class="hstat">
+    <span class="pill"><span class="dot" id="dot_tc"></span>车</span>
+    <span class="pill"><span class="dot" id="dot_ws"></span>WS</span>
+    <span class="pill" id="batt_pill">
+      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+        <rect x="2" y="8" width="17" height="9" rx="2.5"/>
+        <path d="M22 11v3" stroke-linecap="round"/>
+        <rect x="4.5" y="10.5" width="9" height="4" rx="1" fill="currentColor" stroke="none"/>
+      </svg>
+      <b id="batt_pct">--</b><span id="batt_v"></span>
+    </span>
+  </div>
 </header>
 <main>
-  <section id="panel">
+  <section class="card" id="panel">
     <div class="gauge">
-      <div class="bar"><div id="bar_lt"></div></div>
-      <div class="readout"><span id="v_lt">0</span> mm/s</div>
-      <div class="bar"><div id="bar_lm"></div></div>
-      <label>左轮 目标/实测</label>
+      <label>左轮</label>
+      <div class="bar bar-t"><div id="bar_lt"></div></div>
+      <div class="bar bar-m"><div id="bar_lm"></div></div>
+      <div class="readout"><span id="v_lt">0</span><small>mm/s</small></div>
+      <label class="gauge-sub">目标 · 实测</label>
     </div>
     <div id="speedo">
       <div id="speed_val">--</div>
       <div id="speed_unit">km/h</div>
       <div id="speed_dir">&nbsp;</div>
-      <div id="state">未连接</div>
+      <div id="state" class="state" data-tone="dim">未连接</div>
     </div>
     <div class="gauge">
-      <div class="bar"><div id="bar_rt"></div></div>
-      <div class="readout"><span id="v_rt">0</span> mm/s</div>
-      <div class="bar"><div id="bar_rm"></div></div>
-      <label>右轮 目标/实测</label>
+      <label>右轮</label>
+      <div class="bar bar-t"><div id="bar_rt"></div></div>
+      <div class="bar bar-m"><div id="bar_rm"></div></div>
+      <div class="readout"><span id="v_rt">0</span><small>mm/s</small></div>
+      <label class="gauge-sub">目标 · 实测</label>
     </div>
   </section>
-  <section>
-    <div id="joy"><div id="knob"></div></div>
-    <div class="row">
-      <button id="btn_stop">STOP</button>
+  <section class="card joy-card">
+    <div id="joy">
+      <span class="guide" aria-hidden="true"></span>
+      <span class="arr n" aria-hidden="true">▲</span>
+      <span class="arr s" aria-hidden="true">▼</span>
+      <span class="arr w" aria-hidden="true">◀</span>
+      <span class="arr e" aria-hidden="true">▶</span>
+      <div id="knob"></div>
+    </div>
+    <div class="row ctl">
+      <button id="btn_stop" class="danger">STOP</button>
       <button id="btn_pair">配对</button>
-      <span id="rtt">rtt --</span>
     </div>
-    <div class="row">
-      <span>里程 <span id="odo">0</span> m</span>
-      <span id="ver"></span>
+    <div class="row stats">
+      <span class="chip">里程 <b id="odo">0</b> m</span>
+      <span class="chip" id="rtt">rtt --</span>
     </div>
   </section>
-  <section id="maint">
+  <section class="card" id="maint">
     <details>
-      <summary>维护</summary>
-      <div class="row">
-        <input type="file" id="file_c6" accept=".bin">
+      <summary>维护 · 固件升级</summary>
+      <div class="mrow">
+        <label class="file"><input type="file" id="file_c6" accept=".bin"><span id="lbl_c6">选择 C6 固件 (.bin)</span></label>
         <button id="btn_ota_c6">升级 C6</button>
       </div>
-      <div class="row">
-        <input type="file" id="file_tc" accept=".bin">
+      <div class="mrow">
+        <label class="file"><input type="file" id="file_tc" accept=".bin"><span id="lbl_tc">选择 TC275 固件 (.bin)</span></label>
         <button id="btn_ota_tc">升级 TC275</button>
       </div>
+      <div class="ota-bar"><div id="ota_bar"></div></div>
       <div id="ota_progress"></div>
-      <div class="row"><a href="/api/diag" target="_blank">诊断 /api/diag</a></div>
+      <div class="mrow link"><a href="/api/diag" target="_blank">诊断信息 /api/diag →</a></div>
     </details>
   </section>
 </main>
