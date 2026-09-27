@@ -172,15 +172,18 @@ esp_err_t bridge_post_cmd(const proto_frame_t *f, int sd)
         }
         /* DRIVE is periodic newest-wins (30 Hz joystick, doubles as heartbeat):
          * a pump stall behind a slow broadcast leaves the queue full of
-         * superseded positions, so drop the oldest and take the new one - the
-         * page must never see a bogus "busy" on the control path. One-shot
-         * commands (pair / OTA / DPT) keep the strict no-drop error. */
-        cmd_msg_t stale;
-        if ((xQueueReceive(s_br.q_cmd, &stale, 0) != pdTRUE) ||
-            (xQueueSend(s_br.q_cmd, &m, 0) != pdTRUE))
+         * superseded positions. Receiving the stale frame HERE is forbidden,
+         * though: q_cmd is a queue-set member and a receive outside the
+         * select flow leaves a phantom entry in the set - the set's count
+         * drifts up until prvNotifyQueueSetContainer asserts and reboots the
+         * chip mid-drive (coredump 09-27: queue.c:3362). Drop the NEW frame
+         * instead - the bridge pump is only milliseconds behind and the next
+         * joystick sample is 33 ms away, so nothing observable is lost. */
+        if (f->cmd != PROTO_CMD_DRIVE)
         {
-            return ESP_ERR_NO_MEM;
+            return ESP_ERR_NO_MEM;              /* busy -> WS error, no drop */
         }
+        return ESP_OK;
     }
     return ESP_OK;
 }
