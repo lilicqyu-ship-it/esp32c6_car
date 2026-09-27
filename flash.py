@@ -8,6 +8,9 @@ Commands:
   all     assets first, then full firmware
   mon     serial monitor only (Ctrl+C to exit)
 
+The COM port is auto-detected (Espressif / bridge-chip USB VID); override
+with -p COMx.
+
 Examples:
   python flash.py                 # same as: full
   python flash.py build           # compile only
@@ -19,15 +22,22 @@ which always has click (idf.py depends on it).
 """
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parent
 BUILD = PROJECT / "build"
-DEFAULT_PORT = "COM6"
 BAUD = 460800
 CHIP = "esp32c6"  # this helper is c6_car-specific
+
+# Port auto-detection: the board's built-in USB-Serial-JTAG reports
+# Espressif's VID; external USB-UART bridges get a second-chance match.
+# An explicit -p always wins.  Note VID_058B (Infineon DAS, the TC275 side)
+# must never match.
+ESPRESSIF_VID = 0x303A
+BRIDGE_VIDS = frozenset((0x10C4, 0x1A86, 0x0403))  # CP210x, CH34x, FTDI
 
 EIM_JSON = Path(r"C:\Espressif\tools\eim_idf.json")
 
@@ -71,6 +81,96 @@ def run(cmd, **kw):
     return subprocess.run([str(c) for c in cmd], **kw)
 
 
+def list_serial_ports():
+    """[(device, vid, pid, desc)] - pyserial when available, else a WMI query
+    on Windows, else /dev globbing."""
+    try:
+        from serial.tools import list_ports
+    except ImportError:
+        pass
+    else:
+        return [(p.device, p.vid, p.pid, p.description)
+                for p in list_ports.comports()]
+    if os.name == "nt":
+        # Force UTF-8 on the PowerShell side too: its default pipe encoding
+        # follows the console codepage (GBK on zh-CN boxes) and text=True
+        # would otherwise raise UnicodeDecodeError.
+        ps = ("[Console]::OutputEncoding = [Text.Encoding]::UTF8; "
+              "Get-CimInstance Win32_PnPEntity -Filter \"Name LIKE '%COM%'\" | "
+              "ForEach-Object { $_.Name + '|' + $_.PNPDeviceID }")
+        try:
+            r = subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                               capture_output=True, text=True, encoding="utf-8",
+                               errors="replace", timeout=30)
+        except (OSError, subprocess.TimeoutExpired):
+            return []
+        out = []
+        for line in r.stdout.splitlines():
+            # FTDI-based drivers join VID/PID with '+' (FTDIBUS\...), the
+            # rest with '&' (USB\VID_...) - accept both.
+            m = re.search(r"\((COM\d+)\)\s*\|.*?VID_([0-9A-Fa-f]{4})"
+                          r"[&+]PID_([0-9A-Fa-f]{4})", line)
+            if m:
+                desc = line.split("(", 1)[0].strip()
+                out.append((m.group(1), int(m.group(2), 16),
+                            int(m.group(3), 16), desc))
+        return out
+    import glob
+    devs = sorted(glob.glob("/dev/ttyUSB*") + glob.glob("/dev/ttyACM*")
+                  + glob.glob("/dev/cu.usb*"))
+    return [(d, None, None, "") for d in devs]
+
+
+def detect_port():
+    """(device, desc) of the board's port or None.  Espressif VID wins over
+    bridge chips; ties break by lowest COM number."""
+    ports = list_serial_ports()
+
+    def com_no(p):
+        return int(re.sub(r"\D", "", p[0]) or 0)
+
+    for vids in ((ESPRESSIF_VID,), BRIDGE_VIDS):
+        hits = sorted((p for p in ports if p[1] in vids), key=com_no)
+        if hits:
+            return hits[0][0], hits[0][3]
+    if len(ports) == 1:
+        return ports[0][0], ports[0][3]
+    return None
+
+
+def resolve_port(port):
+    """The explicit -p value, else auto-detect the board."""
+    if port:
+        return port
+    hit = detect_port()
+    if hit:
+        dev, desc = hit
+        # localized Windows descriptions ("USB 串行设备") garble across
+        # codepages - keep them only when plain ASCII
+        print(f"[c6] port {dev} ({desc if desc.isascii() else 'usb serial'})")
+        return dev
+    seen = ", ".join(sorted(p[0] for p in list_serial_ports())) or "none"
+    sys.exit(f"[c6] board COM port not found (ports: {seen}) - "
+             "plug in the board or pass -p COMx")
+
+
+def ensure_port_free(port):
+    """Fail early with a readable message when a monitor / log-capture
+    process holds the port - esptool's own error is cryptic."""
+    try:
+        import serial
+    except ImportError:
+        return
+    try:
+        serial.Serial(port).close()
+    except serial.SerialException as e:
+        msg = str(e)
+        if "PermissionError" in msg or "denied" in msg.lower():
+            sys.exit(f"[c6] {port} is held by another process (serial "
+                     "monitor / log capture) - close it and retry")
+        # missing device etc.: let esptool report the details
+
+
 def run_build():
     """Compile via idf.py.  On Windows the toolchain PATH lives in the EIM
     activation script, so the build runs inside an activated PowerShell;
@@ -99,6 +199,7 @@ def flash_assets(port):
     if r.returncode != 0:
         sys.exit("assets packing failed")
     parttool = idf / "components" / "partition_table" / "parttool.py"
+    ensure_port_free(port)
     r = run([py, parttool, "-p", port, "write_partition",
              "--partition-name=assets", "--input", BUILD / "assets.bin"], cwd=BUILD)
     if r.returncode != 0:
@@ -115,6 +216,7 @@ def flash_full(port):
     if not (BUILD / "c6_car.bin").exists():
         sys.exit("build/c6_car.bin missing - run `python flash.py build` first "
                  "or pass -b")
+    ensure_port_free(port)
     run([py, "-m", "esptool", "--chip", CHIP, "-p", port, "-b", BAUD,
          "--before=default-reset", "--after=hard-reset",
          "write-flash", "@flash_args"], cwd=BUILD)
@@ -127,7 +229,11 @@ def do_monitor(port):
         print("pyserial not available for monitor - run inside the IDF venv "
               "or use `idf.py -p %s monitor`" % port)
         return
-    with serial.Serial(port, 115200, timeout=0.5) as ser:
+    try:
+        ser = serial.Serial(port, 115200, timeout=0.5)
+    except serial.SerialException as e:
+        sys.exit(f"[c6] cannot open {port}: {e}")
+    with ser:
         print(f"--- monitor {port} (Ctrl+C to exit) ---")
         try:
             while True:
@@ -140,8 +246,8 @@ def do_monitor(port):
 
 
 def common_opts(f):
-    f = click.option("-p", "--port", default=DEFAULT_PORT, show_default=True,
-                     help="Serial port.")(f)
+    f = click.option("-p", "--port", default=None,
+                     help="Serial port (auto-detected when omitted).")(f)
     f = click.option("-m", "--monitor", is_flag=True,
                      help="Open the serial monitor after flashing.")(f)
     f = click.option("-b", "--build", is_flag=True,
@@ -170,6 +276,7 @@ def build():
 @common_opts
 def full(port, monitor, build):
     """Flash bootloader + partition table + otadata + firmware."""
+    port = resolve_port(port)
     print(f"[c6] mode=full port={port}")
     if build or not (BUILD / "c6_car.bin").exists():
         run_build()
@@ -182,6 +289,7 @@ def full(port, monitor, build):
 @common_opts
 def assets(port, monitor, build):
     """Repack assets_src/ and flash the control page only (firmware untouched)."""
+    port = resolve_port(port)
     print(f"[c6] mode=assets port={port}")
     flash_assets(port)
     if monitor:
@@ -192,6 +300,7 @@ def assets(port, monitor, build):
 @common_opts
 def all_cmd(port, monitor, build):
     """Flash assets first, then full firmware (one power cycle for the user)."""
+    port = resolve_port(port)
     print(f"[c6] mode=all port={port}")
     flash_assets(port)
     if build or not (BUILD / "c6_car.bin").exists():
@@ -202,10 +311,10 @@ def all_cmd(port, monitor, build):
 
 
 @cli.command()
-@click.argument("port", default=DEFAULT_PORT)
+@click.argument("port", required=False)
 def mon(port):
     """Serial monitor only (115200, Ctrl+C to exit)."""
-    do_monitor(port)
+    do_monitor(resolve_port(port))
 
 
 if __name__ == "__main__":

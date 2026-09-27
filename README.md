@@ -73,7 +73,8 @@ idf.py -p PORT flash monitor
 > python flash.py mon           # 仅串口监视
 > ```
 >
-> 各烧录命令均支持 `-p COM7` 指定端口（默认 COM14）、`-b` 烧前编译、
+> 各烧录命令均支持 `-p COM7` 指定端口（省略时按 USB VID 自动识别：
+> Espressif 0x303A 优先，CP210x/CH34x/FTDI 桥接次之）、`-b` 烧前编译、
 > `-m` 烧后监视。`idf.py` 只有在已激活环境的 PowerShell 里才可用。
 
 ```powershell

@@ -6,11 +6,11 @@ rem Usage:  flash.bat [mode] [COM port] [mon]
 rem   mode   full (default) = bootloader + partition table + otadata + firmware
 rem          assets         = control page only (repacks assets_src, firmware untouched)
 rem          all            = assets first, then full firmware (one power cycle for the user)
-rem   COM    default COM14 (e.g. flash.bat COM7)
+rem   COM    auto-detected when omitted (e.g. flash.bat COM7 to force one)
 rem   mon    open the serial monitor after flashing (full/all only)
 setlocal
 set "MODE=full"
-set "PORT=COM14"
+set "PORT="
 set "EXTRA="
 :parse
 if "%~1"=="" goto run
@@ -20,6 +20,14 @@ if /i "%~1"=="all" (set "MODE=all" & shift & goto parse)
 if /i "%~1"=="mon" (set "EXTRA=monitor" & shift & goto parse)
 (set "PORT=%~1" & shift & goto parse)
 :run
+if not defined PORT (
+    rem Espressif USB-Serial-JTAG, then CP210x / CH34x bridges
+    for /f "usebackq delims=" %%P in (`powershell -NoProfile -Command "(Get-CimInstance Win32_SerialPort -Filter \"PNPDeviceID LIKE '%%VID_303A%%' OR PNPDeviceID LIKE '%%VID_10C4%%' OR PNPDeviceID LIKE '%%VID_1A86%%'\").DeviceID"`) do set "PORT=%%P"
+)
+if not defined PORT (
+    echo [c6] board COM port not found - plug in the board or pass one: flash.bat full COM7
+    exit /b 1
+)
 echo [c6] mode=%MODE% port=%PORT% ...
 rem clear MSYSTEM if launched from Git Bash - idf.py refuses to run under MSys
 set MSYSTEM=
