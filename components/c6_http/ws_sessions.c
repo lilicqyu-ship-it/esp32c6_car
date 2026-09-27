@@ -132,7 +132,18 @@ void ws_sess_set_ws(int fd)
     s = ws_sess_get(fd);
     if (s != NULL)
     {
+        bool was = s->ws;
         s->ws = true;
+        /* ws_sess_open() already notified on socket open, but at that point
+         * (pre-handshake) this session was no broadcast target yet, so the
+         * bridge's tc reply missed it - a page opened on an already-up link
+         * stayed on "car offline" until the next link edge, which on a stable
+         * link never comes. Notify again now that the session counts as a
+         * broadcast target so the current tc state reaches it immediately. */
+        if (!was)
+        {
+            notify_change();
+        }
     }
 }
 

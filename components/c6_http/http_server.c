@@ -12,6 +12,7 @@
 #include "esp_ota_ops.h"
 #include "esp_system.h"
 #include "esp_partition.h"
+#include "esp_timer.h"
 
 #include "lwip/sockets.h"
 
@@ -121,6 +122,7 @@ static esp_err_t assets_handler(httpd_req_t *req)
     assets_entry_t e;
     uint8_t buf[4096];
 
+    ESP_LOGI(TAG, "GET %s", req->uri);
     if (strcmp(path, "/") == 0)
     {
         path = "/index.html";
@@ -140,15 +142,18 @@ static esp_err_t assets_handler(httpd_req_t *req)
             int n = assets_read(&e, off, buf, sizeof(buf));
             if (n <= 0)
             {
+                ESP_LOGW(TAG, "GET %s read fail @%lu", path, (unsigned long)off);
                 return ESP_FAIL;
             }
             if (httpd_resp_send_chunk(req, (const char *)buf, (ssize_t)n) != ESP_OK)
             {
+                ESP_LOGW(TAG, "GET %s send fail @%lu", path, (unsigned long)off);
                 return ESP_FAIL;
             }
             off += (uint32_t)n;
         }
         (void)httpd_resp_send_chunk(req, NULL, 0);
+        ESP_LOGI(TAG, "GET %s ok (%lu B gz)", path, (unsigned long)e.gz_len);
         return ESP_OK;
     }
 
@@ -246,10 +251,12 @@ static esp_err_t ws_post_handshake(httpd_req_t *req)
     ws_tighten_send_timeout(fd);
     ws_sess_set_ws(fd);
     sess = ws_sess_get(fd);
+    ESP_LOGI(TAG, "post hs fd=%d sess=%d", fd, sess != NULL);
     if ((sess != NULL) && (sess->hello_sent == 0u))
     {
         sess->hello_sent = 1u;
-        (void)ws_send_hello(fd);
+        esp_err_t hrc = ws_send_hello(fd);
+        ESP_LOGI(TAG, "hello fd=%d rc=%s", fd, esp_err_to_name(hrc));
     }
     return ESP_OK;
 }
@@ -327,7 +334,16 @@ static esp_err_t ws_handler(httpd_req_t *req)
     }
     if (pkt.len == 0u)
     {
-        return ESP_OK;                            /* control frame (ping/close) */
+        /* a CLOSE frame arrives with no payload, so the generic control-frame
+         * early-out would swallow it and the session would linger until the
+         * browser's FIN fallback - answer the hangup explicitly instead */
+        if (pkt.type == HTTPD_WS_TYPE_CLOSE)
+        {
+            ESP_LOGI(TAG, "ws close frame fd=%d", fd);
+            ws_sess_close(fd);
+            return ESP_FAIL;
+        }
+        return ESP_OK;                            /* ping/pong control frame */
     }
     if (pkt.len > (RX_BUF_LEN - 1u))
     {
@@ -358,6 +374,7 @@ static esp_err_t ws_handler(httpd_req_t *req)
             break;
         }
         case HTTPD_WS_TYPE_CLOSE:
+            ESP_LOGI(TAG, "ws close frame(fd) fd=%d", fd);
             ws_sess_close(fd);
             return ESP_FAIL;                        /* hang up: a later frame
                                                        would silently re-open
@@ -474,6 +491,7 @@ static esp_err_t api_health_handler(httpd_req_t *req)
     char json[256];
     const esp_partition_t *run = esp_ota_get_running_partition();
 
+    ESP_LOGI(TAG, "health");
     (void)snprintf(json, sizeof(json),
                    "{\"up\":true,\"ver\":\"%s\",\"slot\":\"%s\",\"ctrl\":%s,"
                    "\"heap\":%u}",
@@ -614,6 +632,7 @@ static void http_close_cb(httpd_handle_t hd, int sockfd)
     bool was_ctrl;
 
     (void)hd;
+    ESP_LOGI(TAG, "close fd=%d", sockfd);
     /* LLDD 4.6.3: phone disconnect must terminate an in-flight relay/self
      * OTA immediately (0x65 ABORT to TC275 / ota_task abort flag) */
     if (s_http.have_c6 && (s_http.sink_c6.abort != NULL))
@@ -633,6 +652,79 @@ static void http_close_cb(httpd_handle_t hd, int sockfd)
 }
 
 /* ========================================================================== */
+/* Connected-socket inventory (bench diagnostic, 09-27 "page never loads
+ * again" incident): that incident presented only as accept() EMFILE with no
+ * further clues, and IDF's lwIP keeps no per-pool stats (MEMP_MEM_MALLOC=1).
+ * Enumerate fds via SO_TYPE + getpeername so the next occurrence carries its
+ * own evidence: which fd holds which peer, how many live sockets there are.
+ * UDP/listening sockets have no peer and are skipped by design. */
+#define DIAG_FD_MAX 128
+#define DIAG_PEERS_CAP 320
+static void http_pool_diag(void *unused)
+{
+    (void)unused;
+    int live = 0;
+    char peers[DIAG_PEERS_CAP];
+    size_t off = 0;
+
+    peers[0] = '\0';
+    for (int fd = 0; fd < DIAG_FD_MAX; fd++)
+    {
+        struct sockaddr_storage ss;
+        socklen_t sl = sizeof(ss);
+        int type = 0;
+        socklen_t tl = sizeof(type);
+
+        if ((getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &tl) != 0) ||
+            (getpeername(fd, (struct sockaddr *)&ss, &sl) != 0))
+        {
+            continue;                    /* not an open connected socket */
+        }
+        /* accepted IPv4 connections on the dual-stack listener report
+         * AF_INET6 with a ::ffff:x.y.z.w mapped peer - decode it back */
+        if (ss.ss_family == AF_INET)
+        {
+            const struct sockaddr_in *a = (const struct sockaddr_in *)&ss;
+            off += (size_t)snprintf(peers + off, sizeof(peers) - off,
+                                    " %d=%s:%u", fd,
+                                    inet_ntoa(a->sin_addr),
+                                    (unsigned)ntohs(a->sin_port));
+        }
+        else if (ss.ss_family == AF_INET6)
+        {
+            const struct sockaddr_in6 *a6 = (const struct sockaddr_in6 *)&ss;
+            const uint8_t *b = (const uint8_t *)&a6->sin6_addr;
+            if ((b[0] == 0u) && (b[1] == 0u) && (b[2] == 0u) && (b[3] == 0u) &&
+                (b[4] == 0u) && (b[5] == 0u) && (b[6] == 0u) && (b[7] == 0u) &&
+                (b[8] == 0u) && (b[9] == 0u) && (b[10] == 0xffu) && (b[11] == 0xffu))
+            {
+                off += (size_t)snprintf(peers + off, sizeof(peers) - off,
+                                        " %d=v4:%u.%u.%u.%u:%u", fd,
+                                        b[12], b[13], b[14], b[15],
+                                        (unsigned)ntohs(a6->sin6_port));
+            }
+            else
+            {
+                off += (size_t)snprintf(peers + off, sizeof(peers) - off,
+                                        " %d=v6:%02x%02x:%02x%02x:%u", fd,
+                                        b[0], b[1], b[2], b[3],
+                                        (unsigned)ntohs(a6->sin6_port));
+            }
+        }
+        else
+        {
+            off += (size_t)snprintf(peers + off, sizeof(peers) - off, " %d=af%u",
+                                    fd, (unsigned)ss.ss_family);
+        }
+        live++;
+        if (off > (sizeof(peers) - 48u))
+        {
+            break;                       /* keep the log line bounded */
+        }
+    }
+    ESP_LOGI(TAG, "SOCK live=%d ws_sess=%d:%s", live, ws_sess_count(), peers);
+}
+
 /* lifecycle                                                                  */
 /* ========================================================================== */
 
@@ -670,6 +762,7 @@ void http_set_diag_provider(http_diag_fn fn)
  * iOS/Android pop the portal.  The AP IP is fixed by c6_net. */
 static esp_err_t portal_redirect(httpd_req_t *req)
 {
+    ESP_LOGI(TAG, "portal %s", req->uri);
     httpd_resp_set_status(req, "302 Found");
     httpd_resp_set_hdr(req, "Location", "http://192.168.4.1/");
     return httpd_resp_send(req, NULL, 0);
@@ -743,5 +836,18 @@ esp_err_t http_start(void)
         }
     }
     ESP_LOGI(TAG, "httpd up (v%s)", s_http.fw_ver);
+    {
+        /* see http_pool_diag() above; bench-visible at default log level */
+        const esp_timer_create_args_t dtargs = {
+            .callback = http_pool_diag,
+            .name     = "http_pool",
+        };
+        esp_timer_handle_t dtimer = NULL;
+        if ((esp_timer_create(&dtargs, &dtimer) == ESP_OK) &&
+            (esp_timer_start_periodic(dtimer, 15u * 1000000u) != ESP_OK))
+        {
+            (void)esp_timer_delete(dtimer);
+        }
+    }
     return ESP_OK;
 }
