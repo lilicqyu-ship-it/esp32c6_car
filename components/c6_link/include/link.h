@@ -100,7 +100,8 @@ esp_err_t link_send(const proto_frame_t *f);
  */
 esp_err_t link_send_ota_chunk(uint16_t idx, const uint8_t *data, size_t n);
 
-/* QueueSet members delivering v2 frames / link events (bridge owns the set). */
+/* Deliver v2 frames / link events to the bridge (bridge drains them in its
+ * 20 ms loop; no queue set - coredump 09-27 showed set accounting desync). */
 QueueHandle_t link_rx_queue(void);
 QueueHandle_t link_event_queue(void);
 

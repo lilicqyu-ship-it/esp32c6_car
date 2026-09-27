@@ -172,18 +172,20 @@ esp_err_t bridge_post_cmd(const proto_frame_t *f, int sd)
         }
         /* DRIVE is periodic newest-wins (30 Hz joystick, doubles as heartbeat):
          * a pump stall behind a slow broadcast leaves the queue full of
-         * superseded positions. Receiving the stale frame HERE is forbidden,
-         * though: q_cmd is a queue-set member and a receive outside the
-         * select flow leaves a phantom entry in the set - the set's count
-         * drifts up until prvNotifyQueueSetContainer asserts and reboots the
-         * chip mid-drive (coredump 09-27: queue.c:3362). Drop the NEW frame
-         * instead - the bridge pump is only milliseconds behind and the next
-         * joystick sample is 33 ms away, so nothing observable is lost. */
+         * superseded positions, so drop the oldest and take the new one - the
+         * page must never see a bogus "busy" on the control path. One-shot
+         * commands (pair / OTA / DPT) keep the strict no-drop error. Direct
+         * receive is safe since the queue set is gone (bridge_task). */
         if (f->cmd != PROTO_CMD_DRIVE)
         {
             return ESP_ERR_NO_MEM;              /* busy -> WS error, no drop */
         }
-        return ESP_OK;
+        cmd_msg_t stale;
+        if ((xQueueReceive(s_br.q_cmd, &stale, 0) != pdTRUE) ||
+            (xQueueSend(s_br.q_cmd, &m, 0) != pdTRUE))
+        {
+            return ESP_ERR_NO_MEM;
+        }
     }
     return ESP_OK;
 }
@@ -823,72 +825,50 @@ static void bench_heartbeat_tick(void)
 
 static void bridge_task(void *arg)
 {
-    QueueSetHandle_t set;
-    QueueHandle_t member;
-
     (void)arg;
-    /* the task publishes/withdraws its own handle: on a wiring failure it
-     * self-deletes, and the 20 ms timer must never notify a stale TCB */
+    /* the task publishes its own handle: the 20 ms timer must never notify
+     * a stale TCB */
     s_bridge_task = xTaskGetCurrentTaskHandle();
-    set = xQueueCreateSet(8u + CMD_QUEUE_LEN + LINK_RX_QUEUE_LEN);
-    if (set == NULL)
-    {
-        ESP_LOGE(TAG, "queue set alloc failed");
-        s_bridge_task = NULL;
-        vTaskDelete(NULL);
-        return;
-    }
-    if ((xQueueAddToSet(s_br.q_cmd, set) != pdTRUE) ||
-        (xQueueAddToSet(link_rx_queue(), set) != pdTRUE) ||
-        (xQueueAddToSet(link_event_queue(), set) != pdTRUE))
-    {
-        ESP_LOGE(TAG, "queue set wiring failed");
-        s_bridge_task = NULL;
-        vTaskDelete(NULL);
-        return;
-    }
-
     (void)esp_task_wdt_add(NULL);
 
     for (;;)
     {
-        member = (QueueHandle_t)xQueueSelectFromSet(set, pdMS_TO_TICKS(BRIDGE_TICK_MS));
-        if (member == s_br.q_cmd)
+        /* No queue set: coredumps 09-27 show the set's counter desyncing from
+         * reality (kernel assert queue.c:3362, twice, once at boot with zero
+         * clients) and rebooting the chip mid-drive. A plain 20 ms drain
+         * covers all producers - commands 30 Hz, link frames 50 Hz, events
+         * rare - so nothing overflows, and direct receives here are legal
+         * again (see bridge_post_cmd). */
+        cmd_msg_t m;
+        proto_frame_t f;
+        link_event_t ev;
+
+        while (xQueueReceive(s_br.q_cmd, &m, 0) == pdTRUE)
         {
-            cmd_msg_t m;
-            if (xQueueReceive(member, &m, 0) == pdTRUE)
-            {
-                pump_command(&m);
-            }
+            pump_command(&m);
         }
-        else if (member == link_rx_queue())
+        while (xQueueReceive(link_rx_queue(), &f, 0) == pdTRUE)
         {
-            proto_frame_t f;
-            if (xQueueReceive(member, &f, 0) == pdTRUE)
-            {
-                pump_link_frame(&f);
-            }
+            pump_link_frame(&f);
         }
-        else if (member == link_event_queue())
+        while (xQueueReceive(link_event_queue(), &ev, 0) == pdTRUE)
         {
-            link_event_t ev;
-            if (xQueueReceive(member, &ev, 0) == pdTRUE)
-            {
-                pump_link_event(&ev);
-            }
+            pump_link_event(&ev);
         }
-        if (ulTaskNotifyTake(pdTRUE, 0) != 0u)
-        {
-            /* 20 ms pacing tick: mailbox drain + relay watchdog */
-            broadcast_telemetry();
-            relay_tick();
-            bridge_reconcile_link_state();   /* self-heal "car online" (boot race) */
-            bridge_send_link_state();   /* retry edges dropped earlier by BUSY */
+
+        /* 20 ms pacing tick: mailbox drain + relay watchdog + state reconcile */
+        broadcast_telemetry();
+        relay_tick();
+        bridge_reconcile_link_state();
+        bridge_send_link_state();        /* retry edges dropped earlier by BUSY */
 #if CONFIG_C6_BENCH_CTRL
-            bench_heartbeat_tick();
+        bench_heartbeat_tick();
 #endif
-        }
         (void)esp_task_wdt_reset();
+
+        /* the esp_timer notify usually arrives mid-loop; the timeout keeps the
+         * cadence guaranteed even if it is ever missed */
+        (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(BRIDGE_TICK_MS));
     }
 }
 

@@ -26,7 +26,7 @@
     "--compile-commands-dir=c:\\Code\\TC275\\AURIX-v1.10.36-workspace\\c6_car\\build"
   ],
   "idf.currentSetup": "C:\\esp\\v6.1-beta1\\esp-idf",
-  "idf.port": "COM6",
+  "idf.port": "COM14",
   "idf.openOcdConfigs": [
     "board/esp32c6-builtin.cfg"
   ],
