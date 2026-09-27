@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#0b0f14">
+<title>台架标定 · SmartDrive</title>
+<link rel="icon" type="image/svg+xml" href="/logo.svg">
+<link rel="stylesheet" href="/style.css">
+<style>
+/* 标定页专用样式（doc/17）：仅补现有 class 没有的件，主题变量沿用 style.css */
+.warnban {
+  padding: 10px 14px; border-radius: 12px; font-size: 13px; font-weight: 600;
+  color: var(--warn); border: 1px solid rgba(255, 178, 36, .4);
+  background: rgba(255, 178, 36, .09);
+}
+.cnote { color: var(--dim); font-size: 12px; line-height: 1.6; margin: 6px 0; }
+.chk {
+  display: flex; align-items: center; gap: 8px; margin: 10px 0;
+  font-size: 14px; color: var(--fg); cursor: pointer;
+}
+.chk input { width: 18px; height: 18px; accent-color: var(--accent); flex: none; }
+#btn_calib { width: 100%; }
+#btn_calib:disabled, .jogbtn:disabled, #btn_rec_set:disabled, #btn_rec_clear:disabled { opacity: .45; }
+table.caltbl {
+  width: 100%; border-collapse: collapse; margin-top: 10px;
+  font-size: 13px; font-variant-numeric: tabular-nums;
+}
+.caltbl th, .caltbl td { padding: 7px 6px; text-align: center; border-bottom: 1px solid var(--line); }
+.caltbl th { color: var(--dim); font-weight: 500; font-size: 11px; }
+.caltbl td.bad { color: var(--bad); font-weight: 700; }
+.caltbl td.flip { color: var(--accent2); }
+.caltbl td.okv { color: var(--ok); }
+.caltbl td.dim { color: var(--dim); }
+#caltbl_bar { transition: width 1.4s linear; }
+.row.side { justify-content: space-between; }
+.row.side button { flex: 1; }
+.calcard h3 { margin: 2px 0 8px; font-size: 15px; letter-spacing: .04em; }
+
+/* ---- 车辆俯视图（doc/17 §8.2）---- */
+#carcard { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+#car { width: min(56vw, 210px); height: auto; }
+#carbody { fill: rgba(23, 32, 43, .9); stroke: var(--line); stroke-width: 2; }
+#car.estop #carbody { stroke: var(--bad); stroke-width: 3; }
+#car.stale .wheel rect, #car.stale .wheel line { fill: #2a333d; stroke: #39434e; }
+#car.stale #arrow { fill: #39434e; }
+.wheel rect { fill: #1d2833; stroke: #56708a; stroke-width: 1.5; }
+.wheel line { stroke: #7d97ad; stroke-width: 2; stroke-linecap: round; }
+.wheel.jogging rect { stroke: var(--accent); stroke-width: 2.5; }
+.wheel text { fill: var(--dim); font-size: 11px; font-weight: 700; }
+#arrow { fill: var(--accent); opacity: .9; }
+#arrow.rev { fill: var(--warn); }
+.carv { display: flex; gap: 10px; align-items: center; }
+.carv .chip { flex: none; }
+
+/* ---- 卡片C jog（doc/17 §8.1）---- */
+.jogrow {
+  display: grid; grid-template-columns: 1fr auto 56px auto;
+  align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line);
+}
+.jogrow:last-child { border-bottom: none; }
+.jlabel { font-size: 13px; font-weight: 600; }
+.jogbtn { padding: 10px 14px; font-size: 14px; touch-action: none; }
+.jogbtn.on { background: rgba(60, 230, 200, .18); border-color: var(--accent); }
+.jduty { font-size: 12px; color: var(--dim); text-align: center; font-variant-numeric: tabular-nums; }
+
+/* ---- 卡片D 参数（doc/17 §8.3）---- */
+.prow { display: flex; align-items: center; gap: 10px; margin: 10px 0 4px; }
+.prow label { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.prow input {
+  background: rgba(255, 255, 255, .05); border: 1px solid var(--line);
+  border-radius: 10px; color: var(--fg); padding: 10px 12px; font-size: 15px;
+  font-variant-numeric: tabular-nums; width: 100%;
+}
+#btn_rec_set, #btn_rec_clear { font-size: 13px; padding: 10px 12px; }
+#rec_msg { min-height: 16px; }
+</style>
+</head>
+<body>
+<header>
+  <img class="logo" src="/logo.svg" alt="">
+  <div class="brand">
+    <b>台架标定</b>
+    <span id="ver">--</span>
+  </div>
+  <div class="hstat">
+    <span class="pill"><span class="dot" id="dot_tc"></span>车</span>
+    <span class="pill"><span class="dot" id="dot_ws"></span>WS</span>
+  </div>
+</header>
+<main>
+  <section class="card" id="carcard">
+    <svg id="car" viewBox="0 0 170 250" aria-label="车辆俯视">
+      <polygon id="arrow" points="85,8 76,24 94,24"/>
+      <rect id="carbody" x="50" y="30" width="70" height="196" rx="24"/>
+      <g class="wheel" id="wh_fl">
+        <rect x="16" y="52" width="16" height="54" rx="7"/>
+        <line x1="24" y1="62" x2="24" y2="96"/>
+        <text x="24" y="46" text-anchor="middle" id="lb_fl">A</text>
+      </g>
+      <g class="wheel" id="wh_fr">
+        <rect x="138" y="52" width="16" height="54" rx="7"/>
+        <line x1="146" y1="62" x2="146" y2="96"/>
+        <text x="146" y="46" text-anchor="middle" id="lb_fr">D</text>
+      </g>
+      <g class="wheel" id="wh_rl">
+        <rect x="16" y="156" width="16" height="54" rx="7"/>
+        <line x1="24" y1="166" x2="24" y2="200"/>
+        <text x="24" y="224" text-anchor="middle" id="lb_rl">B</text>
+      </g>
+      <g class="wheel" id="wh_rr">
+        <rect x="138" y="156" width="16" height="54" rx="7"/>
+        <line x1="146" y1="166" x2="146" y2="200"/>
+        <text x="146" y="224" text-anchor="middle" id="lb_rr">C</text>
+      </g>
+    </svg>
+    <div class="carv">
+      <span class="chip">左 <b id="cv_l">0</b> mm/s</span>
+      <span class="chip">右 <b id="cv_r">0</b> mm/s</span>
+    </div>
+  </section>
+  <section class="card">
+    <div class="row">
+      <div id="state" class="state" data-tone="dim">未连接</div>
+    </div>
+    <div class="row side">
+      <button id="btn_stop" class="danger">STOP</button>
+      <button id="btn_pair">配对</button>
+    </div>
+  </section>
+  <div class="warnban">⚠ 判向标定与点动都会转动车轮，必须四轮离地</div>
+  <section class="card calcard">
+    <h3>卡片A · 编码器判向标定</h3>
+    <div class="cnote">
+      说明：每轮 250ms 脉冲共约 1.4s；结果由 TC275 自动写入 DFlash（V1.1），断电保留。<br>
+      标定时请勿同时操作控制页（本页取得控制权后，控制页会被自动降级为观察端）。
+    </div>
+    <label class="chk"><input type="checkbox" id="ck_airborne"> 我已确认四轮离地</label>
+    <div class="row"><button id="btn_calib" disabled>开始判向标定</button></div>
+    <div class="ota-bar"><div id="caltbl_bar"></div></div>
+    <div id="calib_msg" class="cnote"></div>
+    <table class="caltbl">
+      <thead>
+        <tr><th>轮</th><th>位置</th><th>delta</th><th>判定</th><th>状态</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>A</td><td id="p0">前左</td><td id="d0">--</td><td id="j0">--</td><td id="s0">--</td></tr>
+        <tr><td>B</td><td id="p1">后左</td><td id="d1">--</td><td id="j1">--</td><td id="s1">--</td></tr>
+        <tr><td>C</td><td id="p2">后右</td><td id="d2">--</td><td id="j2">--</td><td id="s2">--</td></tr>
+        <tr><td>D</td><td id="p3">前右</td><td id="d3">--</td><td id="j3">--</td><td id="s3">--</td></tr>
+      </tbody>
+    </table>
+  </section>
+  <section class="card calcard">
+    <h3>卡片B · 闭环验证观察</h3>
+    <div class="gauge">
+      <label>左侧</label>
+      <div class="bar bar-t"><div id="bar_lt"></div></div>
+      <div class="bar bar-m"><div id="bar_lm"></div></div>
+      <div class="readout"><span id="v_lm">0</span><small>mm/s</small></div>
+      <label class="gauge-sub">目标 · 实测</label>
+    </div>
+    <div class="gauge">
+      <label>右侧</label>
+      <div class="bar bar-t"><div id="bar_rt"></div></div>
+      <div class="bar bar-m"><div id="bar_rm"></div></div>
+      <div class="readout"><span id="v_rm">0</span><small>mm/s</small></div>
+      <label class="gauge-sub">目标 · 实测</label>
+    </div>
+  </section>
+  <section class="card calcard">
+    <h3>卡片C · 逐电机点动（开环 jog）</h3>
+    <div class="cnote">按住即转（±50% duty，30Hz 刷新），松手即停；固件侧另有 300ms 无刷新自动停。与判向标定互斥。</div>
+    <div class="jogrow">
+      <span class="jlabel" id="jl0">A · 前左</span>
+      <button class="jogbtn" id="jn0">◀ 反转</button>
+      <span class="jduty" id="jd0">0</span>
+      <button class="jogbtn" id="jp0">▶ 正转</button>
+    </div>
+    <div class="jogrow">
+      <span class="jlabel" id="jl1">B · 后左</span>
+      <button class="jogbtn" id="jn1">◀ 反转</button>
+      <span class="jduty" id="jd1">0</span>
+      <button class="jogbtn" id="jp1">▶ 正转</button>
+    </div>
+    <div class="jogrow">
+      <span class="jlabel" id="jl2">C · 后右</span>
+      <button class="jogbtn" id="jn2">◀ 反转</button>
+      <span class="jduty" id="jd2">0</span>
+      <button class="jogbtn" id="jp2">▶ 正转</button>
+    </div>
+    <div class="jogrow">
+      <span class="jlabel" id="jl3">D · 前右</span>
+      <button class="jogbtn" id="jn3">◀ 反转</button>
+      <span class="jduty" id="jd3">0</span>
+      <button class="jogbtn" id="jp3">▶ 正转</button>
+    </div>
+  </section>
+  <section class="card calcard">
+    <h3>卡片D · 参数与持久化（TC275 DFlash）</h3>
+    <div class="cnote" id="rec_src">当前生效参数：等待 0x72 REC_GET 回传…</div>
+    <table class="caltbl">
+      <thead>
+        <tr><th>电机</th><th>位置</th><th>编码器方向</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>A</td><td id="q0">前左</td><td id="w0">--</td></tr>
+        <tr><td>B</td><td id="q1">后左</td><td id="w1">--</td></tr>
+        <tr><td>C</td><td id="q2">后右</td><td id="w2">--</td></tr>
+        <tr><td>D</td><td id="q3">前右</td><td id="w3">--</td></tr>
+      </tbody>
+    </table>
+    <div class="prow">
+      <label>满量程速度 fullScale（mm/s，100..5000）
+        <input id="in_fs" type="number" min="100" max="5000" step="1" value="3000">
+      </label>
+      <label>轮径 wheelDia（mm，30..200）
+        <input id="in_wd" type="number" min="30" max="200" step="1" value="100">
+      </label>
+    </div>
+    <div class="row side">
+      <button id="btn_rec_set" disabled>应用并写入 DFlash</button>
+      <button id="btn_rec_clear" disabled>恢复默认并擦除</button>
+    </div>
+    <div id="rec_msg" class="cnote"></div>
+  </section>
+</main>
+<script src="/calib.js"></script>
+</body>
+</html>

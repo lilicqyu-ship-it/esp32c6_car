@@ -777,6 +777,8 @@ esp_err_t http_start(void)
         { .uri = "/index.html",.method = HTTP_GET,  .handler = assets_handler },
         { .uri = "/app.js",    .method = HTTP_GET,  .handler = assets_handler },
         { .uri = "/style.css", .method = HTTP_GET,  .handler = assets_handler },
+        { .uri = "/calib.html",.method = HTTP_GET,  .handler = assets_handler },
+        { .uri = "/calib.js",  .method = HTTP_GET,  .handler = assets_handler },
         { .uri = "/logo.svg",  .method = HTTP_GET,  .handler = assets_handler },
         { .uri = "/favicon.ico", .method = HTTP_GET, .handler = assets_handler },
         { .uri = "/api/health",.method = HTTP_GET,  .handler = api_health_handler },

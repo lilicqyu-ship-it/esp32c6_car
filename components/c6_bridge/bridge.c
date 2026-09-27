@@ -601,6 +601,81 @@ static void broadcast_telemetry(void)
 
 /* ---- LINK events / frames -----------------------------------------------------------*/
 
+/* DPT result sub-ops carried through the v2 DIAG tunnel (doc/17 §8.4).
+ * c6_link mirrors the inbound SF EVT CID byte into DIAG data[0] (22 §5.5), so
+ * the bridge distinguishes them here without seeing the SF container itself. */
+#define DIAG_SUB_DPT_RESULT   0x22u   /* cal: {op, status, invert i8x4, delta i32x4 LE, saved} */
+#define DIAG_SUB_DPT_REC      0x23u   /* rec: {ver, src, pos u8x4, invert i8x4,
+                                         fullScale i16, wheelDia i16, crcOk} LE (doc/17 §8.4)  */
+
+/* EVT 0x22 -> {"t":"cal","status":n,"saved":n,"invert":[..],"delta":[..]}.
+ * p points past the sub-op byte. Base record is 22B (op+status+invert4+delta16);
+ * saved (V1.1) is read only when present. */
+static void bridge_emit_cal(const uint8_t *p, uint16_t n)
+{
+    char json[192];
+    int k;
+    uint8_t saved = 0u;
+
+    if (n < 22u)
+    {
+        return;
+    }
+    if (n >= 23u)
+    {
+        saved = p[22];
+    }
+    k = snprintf(json, sizeof(json), "{\"t\":\"cal\",\"status\":%u,\"saved\":%u,\"invert\":[",
+                 p[1], saved);
+    for (int i = 0; i < 4; i++)
+    {
+        k += snprintf(json + k, sizeof(json) - (size_t)k, "%s%d",
+                      (i == 0) ? "" : ",", (int)(int8_t)p[2 + i]);
+    }
+    k += snprintf(json + k, sizeof(json) - (size_t)k, "],\"delta\":[");
+    for (int i = 0; i < 4; i++)
+    {
+        int32_t d = (int32_t)proto_get_u32(&p[6 + (i * 4)]);
+        k += snprintf(json + k, sizeof(json) - (size_t)k, "%s%ld",
+                      (i == 0) ? "" : ",", (long)d);
+    }
+    (void)snprintf(json + k, sizeof(json) - (size_t)k, "]}");
+    http_broadcast_ctl(json);
+}
+
+/* EVT 0x23 -> {"t":"rec","ver":n,"src":n,"pos":[..],"invert":[..],
+ *              "fullScale":n,"wheelDia":n,"crcOk":n} */
+static void bridge_emit_rec(const uint8_t *p, uint16_t n)
+{
+    char json[160];
+    int k;
+    int16_t fs, wd;
+
+    if (n < 15u)
+    {
+        return;
+    }
+    fs = (int16_t)proto_get_u16(&p[10]);
+    wd = (int16_t)proto_get_u16(&p[12]);
+    k = snprintf(json, sizeof(json), "{\"t\":\"rec\",\"ver\":%u,\"src\":%u,\"pos\":[",
+                 p[0], p[1]);
+    for (int i = 0; i < 4; i++)
+    {
+        k += snprintf(json + k, sizeof(json) - (size_t)k, "%s%u",
+                      (i == 0) ? "" : ",", p[2 + i]);
+    }
+    k += snprintf(json + k, sizeof(json) - (size_t)k, "],\"invert\":[");
+    for (int i = 0; i < 4; i++)
+    {
+        k += snprintf(json + k, sizeof(json) - (size_t)k, "%s%d",
+                      (i == 0) ? "" : ",", (int)(int8_t)p[6 + i]);
+    }
+    (void)snprintf(json + k, sizeof(json) - (size_t)k,
+                   "],\"fullScale\":%d,\"wheelDia\":%d,\"crcOk\":%u}",
+                   fs, wd, p[14]);
+    http_broadcast_ctl(json);
+}
+
 static void pump_link_frame(const proto_frame_t *f)
 {
     switch (f->cmd)
@@ -625,11 +700,25 @@ static void pump_link_frame(const proto_frame_t *f)
             /* SF EVT / generic-ACK tunnel from the SPI link (22 §5.5) */
             if (f->len >= 1u)
             {
-                char json[96];
-                (void)snprintf(json, sizeof(json),
-                               "{\"t\":\"evt\",\"cid\":%u,\"n\":%u}",
-                               f->data[0], (unsigned)(f->len - 1u));
-                http_broadcast_ctl(json);
+                const uint8_t sub = f->data[0];
+                const uint8_t *p  = &f->data[1];
+                uint16_t n        = (uint16_t)(f->len - 1u);
+                if (sub == DIAG_SUB_DPT_RESULT)
+                {
+                    bridge_emit_cal(p, n);
+                }
+                else if (sub == DIAG_SUB_DPT_REC)
+                {
+                    bridge_emit_rec(p, n);
+                }
+                else
+                {
+                    char json[96];
+                    (void)snprintf(json, sizeof(json),
+                                   "{\"t\":\"evt\",\"cid\":%u,\"n\":%u}",
+                                   sub, (unsigned)n);
+                    http_broadcast_ctl(json);
+                }
             }
             break;
         case PROTO_CMD_LINK_STATE:
