@@ -65,6 +65,13 @@ extern "C" {
 #define SF_CID_EVT_ERROR     0x20u   /* {u16 errcode, ...}                    */
 #define SF_CID_EVT_STATE     0x21u   /* {u8 kind, ...}: kind 1 = PAIR reply,
                                         payload then = v2 0x51 data           */
+#define SF_CID_DPT_RESULT    0x22u   /* DPT result (doc/17 §4.1/§8.4):
+                                        {op u8, status u8, invert i8x4,
+                                         delta i32x4 LE, saved u8}           */
+#define SF_CID_DPT_REC       0x23u   /* DPT record (doc/17 §8.4), 15B:
+                                        {ver u8, src u8, pos u8x4,
+                                         invert i8x4, fullScale i16,
+                                         wheelDia i16, crcOk u8} LE          */
 
 /* OTA (0x06 OTA_D / 0x07 OTA_C) */
 #define SF_CID_OTA_BEGIN     0x30u   /* {u32 total, u32 crc32}                */

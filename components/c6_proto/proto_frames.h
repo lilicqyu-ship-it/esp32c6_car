@@ -75,16 +75,22 @@ extern "C" {
 #define PROTO_CMD_OTA_ABORT         0x65u  /* drop half-written slot          */
 
 /* production test group */
-#define PROTO_CMD_DPT_ENTER         0x70u
-#define PROTO_CMD_DPT_LED           0x71u
-#define PROTO_CMD_DPT_MOTOR_RUN     0x72u
-#define PROTO_CMD_DPT_ENC_READ      0x73u
-#define PROTO_CMD_DPT_CAL           0x74u
-#define PROTO_CMD_DPT_CAL_SAVE      0x75u
-#define PROTO_CMD_DPT_SN_WRITE      0x76u
-#define PROTO_CMD_DPT_AGING         0x77u
-#define PROTO_CMD_DPT_REPORT        0x78u
-#define PROTO_CMD_DPT_SELFTEST      0x79u  /* C6-local items (LLDD 3.1)       */
+/* Production test group - bench calibration family (doc/17 §8.4, myCar doc/34 §9).
+ * Byte 0x70 keeps its historical name here and means CAL DIR on the TC275 side:
+ * PROTO_CMD_DPT_ENTER (c6_car) == PROTO_CMD_DPT_CAL_DIR (myCar protocol.h) -
+ * same byte, two names, actual semantics = encoder direction calibration.
+ * 0x75..0x79 are NOT implemented on TC275 (they fall into the slave default
+ * branch); the /calib.html page must never send them. */
+#define PROTO_CMD_DPT_ENTER         0x70u  /* 编码器判向标定 (CAL_DIR)          */
+#define PROTO_CMD_DPT_MOTOR_JOG     0x71u  /* {motor u8, duty i16LE} 开环点动   */
+#define PROTO_CMD_DPT_REC_GET       0x72u  /* 读 DFlash 标定记录 -> EVT 0x23    */
+#define PROTO_CMD_DPT_REC_SET       0x73u  /* 12 B 写入 -> EVT 0x23 回执        */
+#define PROTO_CMD_DPT_REC_CLEAR     0x74u  /* 擦除回默认 -> EVT 0x23 回执       */
+#define PROTO_CMD_DPT_CAL_SAVE      0x75u  /* 未实现（TC275 default 忽略）      */
+#define PROTO_CMD_DPT_SN_WRITE      0x76u  /* 未实现                            */
+#define PROTO_CMD_DPT_AGING         0x77u  /* 未实现                            */
+#define PROTO_CMD_DPT_REPORT        0x78u  /* 未实现                            */
+#define PROTO_CMD_DPT_SELFTEST      0x79u  /* 未实现（C6-local items, LLDD 3.1）*/
 
 /* ---- payload sub-ops -----------------------------------------------------*/
 /* 0x42 LINK_STATE */

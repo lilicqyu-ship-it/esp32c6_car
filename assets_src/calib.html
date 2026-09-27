@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#0b0f14">
+<title>台架标定 · SmartDrive</title>
+<link rel="icon" type="image/svg+xml" href="/logo.svg">
+<link rel="stylesheet" href="/style.css">
+<style>
+/* 标定页专用样式（doc/17 §9）：按标定流程 ①前提 ②判向 ③复核 ④落库 排布，
+ * 主题变量与 gauge/bar/state/chip 等件沿用 style.css，这里只补流程骨架。 */
+
+/* ---- 常驻安全条：滚动到任何一步都能急停，故 sticky ---- */
+#safety {
+  position: sticky; top: 0; z-index: 6; display: flex; align-items: center;
+  gap: 8px; padding: 8px 0 10px; background: rgba(11, 15, 20, .93);
+  backdrop-filter: blur(6px); border-bottom: 1px solid var(--line);
+}
+#safety .state { flex: 1; min-width: 0; margin: 0; }
+#safety #btn_stop { flex: none; padding: 10px 18px; margin: 0; }
+#safety #btn_pair { flex: none; padding: 10px 12px; font-size: 13px; }
+
+/* ---- 流程进度 rail：一眼看出走到哪步、哪步还没过 ---- */
+#steps {
+  display: flex; gap: 6px; margin: 10px 0 2px; padding: 0; list-style: none;
+  font-size: 11px; counter-reset: none;
+}
+#steps .step {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 7px 2px; border-radius: 10px; border: 1px solid var(--line);
+  background: rgba(255, 255, 255, .03); color: var(--dim); text-align: center;
+  transition: color .2s, border-color .2s, background .2s;
+}
+#steps .step b {
+  width: 18px; height: 18px; line-height: 18px; border-radius: 50%;
+  background: #26313d; color: var(--dim); font-size: 11px; font-weight: 700;
+}
+#steps .step.act { color: var(--accent); border-color: rgba(60, 230, 200, .45); background: rgba(60, 230, 200, .07); }
+#steps .step.act b { background: var(--accent); color: #04120f; }
+#steps .step.done { color: var(--ok); border-color: rgba(52, 217, 123, .35); }
+#steps .step.done b { background: var(--ok); color: #04140a; }
+#steps .step.bad { color: var(--bad); border-color: rgba(255, 92, 92, .45); }
+#steps .step.bad b { background: var(--bad); color: #1a0606; }
+
+/* ---- 步骤卡：标题上的序号与 rail 对应 ---- */
+.calcard h3 { margin: 2px 0 8px; font-size: 15px; letter-spacing: .04em; display: flex; align-items: center; gap: 8px; }
+.calcard h3 > b {
+  width: 20px; height: 20px; line-height: 20px; text-align: center; flex: none;
+  border-radius: 50%; background: rgba(60, 230, 200, .16); color: var(--accent); font-size: 12px;
+}
+.calcard h3 small { font-weight: 400; font-size: 11px; color: var(--dim); margin-left: auto; text-align: right; }
+
+/* ---- ① 前提清单 ---- */
+.warnban {
+  padding: 10px 14px; border-radius: 12px; font-size: 13px; font-weight: 600;
+  color: var(--warn); border: 1px solid rgba(255, 178, 36, .4);
+  background: rgba(255, 178, 36, .09); margin-bottom: 4px;
+}
+ul.pre { list-style: none; margin: 8px 0 0; padding: 0; font-size: 13px; }
+ul.pre li { display: flex; align-items: center; gap: 8px; padding: 5px 0; color: var(--dim); }
+ul.pre li i { width: 16px; flex: none; text-align: center; font-style: normal; color: #39434e; }
+ul.pre li.ok { color: var(--fg); }
+ul.pre li.ok i { color: var(--ok); }
+ul.pre li.miss i { color: var(--warn); }
+.chk { display: flex; align-items: center; gap: 8px; margin: 10px 0; font-size: 14px; color: var(--fg); cursor: pointer; }
+.chk input { width: 18px; height: 18px; accent-color: var(--accent); flex: none; }
+
+/* ---- ② 判向 ---- */
+#btn_calib { width: 100%; }
+#btn_calib:disabled, .jogbtn:disabled, #btn_rec_set:disabled, #btn_rec_clear:disabled { opacity: .45; }
+#caltbl_bar { transition: width 1.4s linear; }
+.row.side { justify-content: space-between; }
+.row.side button { flex: 1; }
+.cnote { color: var(--dim); font-size: 12px; line-height: 1.6; margin: 6px 0; }
+table.caltbl { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.caltbl th, .caltbl td { padding: 7px 6px; text-align: center; border-bottom: 1px solid var(--line); }
+.caltbl th { color: var(--dim); font-weight: 500; font-size: 11px; }
+.caltbl td.bad { color: var(--bad); font-weight: 700; }
+.caltbl td.flip { color: var(--accent2); }
+.caltbl td.okv { color: var(--ok); }
+.caltbl td.dim { color: var(--dim); }
+
+/* ---- ③ 复核：车辆俯视图 + 左右实测 + 逐电机点动 ---- */
+#carcard { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+#car { width: min(46vw, 176px); height: auto; }
+#carbody { fill: rgba(23, 32, 43, .9); stroke: var(--line); stroke-width: 2; }
+#car.estop #carbody { stroke: var(--bad); stroke-width: 3; }
+#car.stale .wheel rect, #car.stale .wheel line { fill: #2a333d; stroke: #39434e; }
+#car.stale #arrow { fill: #39434e; }
+.wheel rect { fill: #1d2833; stroke: #56708a; stroke-width: 1.5; }
+.wheel line { stroke: #7d97ad; stroke-width: 2; stroke-linecap: round; }
+.wheel.jogging rect { stroke: var(--accent); stroke-width: 2.5; }
+.wheel text { fill: var(--dim); font-size: 11px; font-weight: 700; }
+#arrow { fill: var(--accent); opacity: .9; }
+#arrow.rev { fill: var(--warn); }
+#live { display: flex; gap: 10px; width: 100%; }
+#live .gauge { flex: 1 1 0; min-width: 0; max-width: none; }
+.jogrow {
+  display: grid; grid-template-columns: 1fr auto 52px auto;
+  align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line);
+}
+.jogrow:last-child { border-bottom: none; }
+.jlabel { font-size: 13px; font-weight: 600; }
+.jver { font-size: 11px; color: var(--dim); font-weight: 400; }
+.jver.flip { color: var(--accent2); }
+.jver.okv { color: var(--ok); }
+.jver.bad { color: var(--bad); }
+.jogbtn { padding: 10px 14px; font-size: 14px; touch-action: none; }
+.jogbtn.on { background: rgba(60, 230, 200, .18); border-color: var(--accent); }
+.jduty { font-size: 12px; color: var(--dim); text-align: center; font-variant-numeric: tabular-nums; }
+
+/* ---- ④ 参数与持久化 ---- */
+.prow { display: flex; align-items: center; gap: 10px; margin: 10px 0 4px; }
+.prow label { flex: 1; display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--dim); }
+.prow input {
+  background: rgba(255, 255, 255, .05); border: 1px solid var(--line);
+  border-radius: 10px; color: var(--fg); padding: 10px 12px; font-size: 15px;
+  font-variant-numeric: tabular-nums; width: 100%;
+}
+#btn_rec_set, #btn_rec_clear { font-size: 13px; padding: 10px 12px; }
+#rec_msg { min-height: 16px; }
+</style>
+</head>
+<body>
+<header>
+  <img class="logo" src="/logo.svg" alt="">
+  <div class="brand">
+    <b>台架标定</b>
+    <span id="ver">--</span>
+  </div>
+  <div class="hstat">
+    <span class="pill"><span class="dot" id="dot_tc"></span>车</span>
+    <span class="pill"><span class="dot" id="dot_ws"></span>WS</span>
+  </div>
+</header>
+<main>
+  <!-- 常驻安全条：任何滚动位置都能急停 -->
+  <div id="safety">
+    <div id="state" class="state" data-tone="dim">未连接</div>
+    <button id="btn_stop" class="danger">STOP</button>
+    <button id="btn_pair">配对</button>
+  </div>
+
+  <ol id="steps">
+    <li class="step" id="st_1"><b>1</b><span>前提</span></li>
+    <li class="step" id="st_2"><b>2</b><span>判向</span></li>
+    <li class="step" id="st_3"><b>3</b><span>复核</span></li>
+    <li class="step" id="st_4"><b>4</b><span>落库</span></li>
+  </ol>
+
+  <!-- ================= ① 安全前提 ================= -->
+  <section class="card calcard">
+    <h3><b>1</b>安全前提<small id="pre_need">四项全绿才能开始标定</small></h3>
+    <div class="warnban">⚠ 标定与点动都会驱动车轮，必须四轮离地、车周无人</div>
+    <ul class="pre">
+      <li id="pr_ws"><i>○</i>与控制页同一条 WebSocket 已连接</li>
+      <li id="pr_ctrl"><i>○</i>本机持有控制权（观察端请先按"配对"）</li>
+      <li id="pr_tc"><i>○</i>TC275 车端在线</li>
+      <li id="pr_air"><i>○</i>已确认四轮离地</li>
+    </ul>
+    <label class="chk"><input type="checkbox" id="ck_airborne"> 我已确认四轮离地</label>
+  </section>
+
+  <!-- ================= ② 编码器判向标定 ================= -->
+  <section class="card calcard">
+    <h3><b>2</b>编码器判向标定<small>0x70 · 每轮约 250ms，共约 1.4s</small></h3>
+    <div class="cnote">
+      结果由 TC275 自动写入 DFlash，断电保留；标定期间本页取得控制权，控制页会自动降级为观察端。
+    </div>
+    <div class="row"><button id="btn_calib" disabled>开始判向标定</button></div>
+    <div class="ota-bar"><div id="caltbl_bar"></div></div>
+    <div id="calib_msg" class="cnote"></div>
+    <table class="caltbl">
+      <thead>
+        <tr><th>轮</th><th>位置</th><th>delta</th><th>计数方向</th><th>标定结论</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>A</td><td id="p0">前左</td><td id="d0">--</td><td id="j0">--</td><td id="s0">--</td></tr>
+        <tr><td>B</td><td id="p1">后左</td><td id="d1">--</td><td id="j1">--</td><td id="s1">--</td></tr>
+        <tr><td>C</td><td id="p2">后右</td><td id="d2">--</td><td id="j2">--</td><td id="s2">--</td></tr>
+        <tr><td>D</td><td id="p3">前右</td><td id="d3">--</td><td id="j3">--</td><td id="s3">--</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ================= ③ 点动复核（车辆实时监视 + 开环 jog） ================= -->
+  <section class="card calcard" id="carcard">
+    <h3><b>3</b>点动复核 · 车辆实时<small>0x71 · 按住即转 ±50%，松手即停</small></h3>
+    <svg id="car" viewBox="0 0 170 250" aria-label="车辆俯视">
+      <polygon id="arrow" points="85,8 76,24 94,24"/>
+      <rect id="carbody" x="50" y="30" width="70" height="196" rx="24"/>
+      <g class="wheel" id="wh_fl">
+        <rect x="16" y="52" width="16" height="54" rx="7"/>
+        <line x1="24" y1="62" x2="24" y2="96"/>
+        <text x="24" y="46" text-anchor="middle" id="lb_fl">A</text>
+      </g>
+      <g class="wheel" id="wh_fr">
+        <rect x="138" y="52" width="16" height="54" rx="7"/>
+        <line x1="146" y1="62" x2="146" y2="96"/>
+        <text x="146" y="46" text-anchor="middle" id="lb_fr">D</text>
+      </g>
+      <g class="wheel" id="wh_rl">
+        <rect x="16" y="156" width="16" height="54" rx="7"/>
+        <line x1="24" y1="166" x2="24" y2="200"/>
+        <text x="24" y="224" text-anchor="middle" id="lb_rl">B</text>
+      </g>
+      <g class="wheel" id="wh_rr">
+        <rect x="138" y="156" width="16" height="54" rx="7"/>
+        <line x1="146" y1="166" x2="146" y2="200"/>
+        <text x="146" y="224" text-anchor="middle" id="lb_rr">C</text>
+      </g>
+    </svg>
+    <div id="live">
+      <div class="gauge">
+        <label>左侧</label>
+        <div class="bar bar-t"><div id="bar_lt"></div></div>
+        <div class="bar bar-m"><div id="bar_lm"></div></div>
+        <div class="readout"><span id="v_lm">0</span><small>mm/s</small></div>
+        <label class="gauge-sub">目标 · 实测</label>
+      </div>
+      <div class="gauge">
+        <label>右侧</label>
+        <div class="bar bar-t"><div id="bar_rt"></div></div>
+        <div class="bar bar-m"><div id="bar_rm"></div></div>
+        <div class="readout"><span id="v_rm">0</span><small>mm/s</small></div>
+        <label class="gauge-sub">目标 · 实测</label>
+      </div>
+    </div>
+    <div class="cnote" id="car_hint">遥测超过 1s 未更新则置灰；红框为故障锁存。轮上字母按 0x23 回传的位置动态标注。</div>
+    <div class="jogrow">
+      <span class="jlabel"><span id="jl0">A · 前左</span><span class="jver" id="jv0">待标定</span></span>
+      <button class="jogbtn" id="jn0">◀ 反转</button>
+      <span class="jduty" id="jd0">0</span>
+      <button class="jogbtn" id="jp0">▶ 正转</button>
+    </div>
+    <div class="jogrow">
+      <span class="jlabel"><span id="jl1">B · 后左</span><span class="jver" id="jv1">待标定</span></span>
+      <button class="jogbtn" id="jn1">◀ 反转</button>
+      <span class="jduty" id="jd1">0</span>
+      <button class="jogbtn" id="jp1">▶ 正转</button>
+    </div>
+    <div class="jogrow">
+      <span class="jlabel"><span id="jl2">C · 后右</span><span class="jver" id="jv2">待标定</span></span>
+      <button class="jogbtn" id="jn2">◀ 反转</button>
+      <span class="jduty" id="jd2">0</span>
+      <button class="jogbtn" id="jp2">▶ 正转</button>
+    </div>
+    <div class="jogrow">
+      <span class="jlabel"><span id="jl3">D · 前右</span><span class="jver" id="jv3">待标定</span></span>
+      <button class="jogbtn" id="jn3">◀ 反转</button>
+      <span class="jduty" id="jd3">0</span>
+      <button class="jogbtn" id="jp3">▶ 正转</button>
+    </div>
+  </section>
+
+  <!-- ================= ④ 生效参数与 DFlash 持久化 ================= -->
+  <section class="card calcard">
+    <h3><b>4</b>生效参数与持久化<small>0x72 回读 · 0x73 写入 · 0x74 擦除</small></h3>
+    <div class="cnote" id="rec_src">当前生效参数：等待 0x72 REC_GET 回传…</div>
+    <table class="caltbl">
+      <thead>
+        <tr><th>电机</th><th>位置映射</th><th>编码器方向（应与②一致）</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>A</td><td id="q0">前左</td><td id="w0">--</td></tr>
+        <tr><td>B</td><td id="q1">后左</td><td id="w1">--</td></tr>
+        <tr><td>C</td><td id="q2">后右</td><td id="w2">--</td></tr>
+        <tr><td>D</td><td id="q3">前右</td><td id="w3">--</td></tr>
+      </tbody>
+    </table>
+    <div class="prow">
+      <label>满量程速度 fullScale（mm/s，100..5000）
+        <input id="in_fs" type="number" min="100" max="5000" step="1" value="3000">
+      </label>
+      <label>轮径 wheelDia（mm，30..200）
+        <input id="in_wd" type="number" min="30" max="200" step="1" value="100">
+      </label>
+    </div>
+    <div class="row side">
+      <button id="btn_rec_set" disabled>应用并写入 DFlash</button>
+      <button id="btn_rec_clear" disabled>恢复默认并擦除</button>
+    </div>
+    <div id="rec_msg" class="cnote"></div>
+  </section>
+</main>
+<script src="/calib.js"></script>
+</body>
+</html>

@@ -756,16 +756,45 @@ void http_set_diag_provider(http_diag_fn fn)
     s_http.diag_fn = fn;
 }
 
-/* captive-portal catch-all: phone CNA probes (/hotspot-detect.html,
- * /generate_204, ...) and app background POSTs land here via the wildcard
- * matcher and get bounced to the control page - that redirect is what makes
- * iOS/Android pop the portal.  The AP IP is fixed by c6_net. */
+/* Wildcard catch-all for phone connectivity probes (/hotspot-detect.html,
+ * /generate_204, ...) and unmatched paths.
+ *
+ * CONFIG_C6_CAPTIVE_PORTAL=y : 302 every probe to the control page - that
+ *   redirect is what makes iOS/Android auto-pop the captive-portal webview.
+ *
+ * CONFIG_C6_CAPTIVE_PORTAL=n (default, manual-URL mode) : answer the probe
+ *   with exactly what the OS expects for "internet is reachable" so it does
+ *   NOT pop a window - iOS/macOS want a tiny body containing "Success",
+ *   Android wants HTTP 204 with no body.  The user then opens the page by
+ *   typing http://192.168.4.1/ (or http://mycar.local/ via mDNS).  Any other
+ *   unknown path returns 404. The AP IP is fixed by c6_net. */
 static esp_err_t portal_redirect(httpd_req_t *req)
 {
+#if CONFIG_C6_CAPTIVE_PORTAL
     ESP_LOGI(TAG, "portal %s", req->uri);
     httpd_resp_set_status(req, "302 Found");
     httpd_resp_set_hdr(req, "Location", "http://192.168.4.1/");
     return httpd_resp_send(req, NULL, 0);
+#else
+    ESP_LOGI(TAG, "probe %s -> success (no popup)", req->uri);
+
+    /* Android/Chrome connectivity check expects an empty 204. */
+    if ((strstr(req->uri, "generate_204") != NULL) ||
+        (strstr(req->uri, "gen_204") != NULL))
+    {
+        httpd_resp_set_status(req, "204 No Content");
+        httpd_resp_set_type(req, "text/plain");
+        return httpd_resp_send(req, NULL, 0);
+    }
+
+    /* iOS/macOS/Windows CNA probes: a 200 whose body is the exact success
+     * marker makes the OS mark the network online and suppress the popup. */
+    static const char cna_ok[] =
+        "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>";
+    httpd_resp_set_status(req, "200 OK");
+    httpd_resp_set_type(req, "text/html");
+    return httpd_resp_send(req, cna_ok, HTTPD_RESP_USE_STRLEN);
+#endif
 }
 
 esp_err_t http_start(void)
@@ -777,6 +806,8 @@ esp_err_t http_start(void)
         { .uri = "/index.html",.method = HTTP_GET,  .handler = assets_handler },
         { .uri = "/app.js",    .method = HTTP_GET,  .handler = assets_handler },
         { .uri = "/style.css", .method = HTTP_GET,  .handler = assets_handler },
+        { .uri = "/calib.html",.method = HTTP_GET,  .handler = assets_handler },
+        { .uri = "/calib.js",  .method = HTTP_GET,  .handler = assets_handler },
         { .uri = "/logo.svg",  .method = HTTP_GET,  .handler = assets_handler },
         { .uri = "/favicon.ico", .method = HTTP_GET, .handler = assets_handler },
         { .uri = "/api/health",.method = HTTP_GET,  .handler = api_health_handler },

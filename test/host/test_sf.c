@@ -207,6 +207,15 @@ static size_t v2_to_sf_ref(const proto_frame_t *vf, sf_frame_t *sf, uint8_t *seq
         memcpy(&sf->data[1], vf->data, vf->len);
         return 1;
     }
+    if (vf->cmd >= PROTO_CMD_DPT_ENTER && vf->cmd <= PROTO_CMD_DPT_SELFTEST)
+    {
+        /* mirror of link.c L285: DPT family -> SF CMD/DPT, payload[0]=op */
+        sf->type = SF_TYPE_CMD; sf->cid = SF_CID_DPT;
+        sf->len  = (uint16_t)(vf->len + 1);
+        sf->data[0] = vf->cmd;
+        memcpy(&sf->data[1], vf->data, vf->len);
+        return 1;
+    }
     return 0;
 }
 
@@ -272,6 +281,87 @@ static int test_ota_chunk_layout(void)
     return 0;
 }
 
+static int test_dpt_calib_frames(void)
+{
+    /* doc/17 V1.1 §8.4: DPT trigger family (page -> TC275) and result
+     * events (TC275 -> page) must survive the SF wire container byte-exactly */
+    proto_frame_t v;
+    sf_frame_t s, out;
+    uint8_t seq = 0;
+    uint8_t wire[SF_MAX_FRAME];
+    sf_parser_t p;
+    size_t n;
+    int i;
+
+    /* 0x70 CAL_DIR, empty payload -> SF CMD/DPT {op=0x70} len=1 */
+    v.ver = PROTO_VER; v.cmd = PROTO_CMD_DPT_ENTER; v.seq = 1; v.len = 0;
+    MU_CHECK_EQ(v2_to_sf_ref(&v, &s, &seq), 1);
+    MU_CHECK_EQ(s.cid, SF_CID_DPT);
+    MU_CHECK_EQ(s.len, 1);
+    MU_CHECK_EQ(s.data[0], PROTO_CMD_DPT_ENTER);
+
+    /* 0x71 MOTOR_JOG {motor=2, duty=-500} -> DPT {0x71,2,0x0C,0xFE} len=4 */
+    v.cmd = 0x71; v.len = 3;
+    v.data[0] = 2; proto_put_u16(&v.data[1], (uint16_t)(int16_t)-500);
+    MU_CHECK_EQ(v2_to_sf_ref(&v, &s, &seq), 1);
+    MU_CHECK_EQ(s.len, 4);
+    MU_CHECK_EQ(s.data[0], 0x71);
+    MU_CHECK_EQ(s.data[1], 2);
+    MU_CHECK_EQ((int16_t)proto_get_u16(&s.data[2]), -500);
+    n = sf_encode(&s, wire, sizeof(wire));
+    sf_parser_init(&p);
+    for (i = 0; i < (int)n; i++) { (void)sf_parser_feed(&p, wire[i], &out); }
+    MU_CHECK_EQ(out.type, SF_TYPE_CMD);
+    MU_CHECK_EQ(out.cid, SF_CID_DPT);
+    MU_CHECK_EQ(out.len, 4);
+    MU_CHECK(memcmp(out.data, s.data, 4) == 0);
+
+    /* 0x73 REC_SET 12B -> DPT len=13 (pos x4, invert x4, fullScale, wheelDia) */
+    v.cmd = 0x73; v.len = 12;
+    for (i = 0; i < 12; i++) { v.data[i] = (uint8_t)(i + 1); }
+    MU_CHECK_EQ(v2_to_sf_ref(&v, &s, &seq), 1);
+    MU_CHECK_EQ(s.len, 13);
+    MU_CHECK(memcmp(s.data, "\x73", 1) == 0);
+
+    /* EVT 0x22 cal result: {op,status,invert i8x4,delta i32x4 LE,saved} 23B */
+    s.type = SF_TYPE_EVT; s.cid = SF_CID_DPT_RESULT; s.seq = seq++; s.flags = 0;
+    s.len = 23; memset(s.data, 0, sizeof(s.data));
+    s.data[0] = PROTO_CMD_DPT_ENTER; s.data[1] = 0;      /* op, status=done */
+    s.data[2] = (uint8_t)-1;                              /* invert[0]       */
+    proto_put_u32(&s.data[6],  (uint32_t)(int32_t)-1204); /* delta[0]        */
+    proto_put_u32(&s.data[18], (uint32_t)(int32_t)987);   /* delta[3]        */
+    s.data[22] = 1;                                       /* saved=DFlash    */
+    n = sf_encode(&s, wire, sizeof(wire));
+    sf_parser_init(&p);
+    for (i = 0; i < (int)n; i++) { (void)sf_parser_feed(&p, wire[i], &out); }
+    MU_CHECK_EQ(out.type, SF_TYPE_EVT);
+    MU_CHECK_EQ(out.cid, SF_CID_DPT_RESULT);
+    MU_CHECK_EQ(out.len, 23);
+    MU_CHECK_EQ((int8_t)out.data[2], -1);
+    MU_CHECK_EQ((int32_t)proto_get_u32(&out.data[6]), -1204);
+    MU_CHECK_EQ((int32_t)proto_get_u32(&out.data[18]), 987);
+    MU_CHECK_EQ(out.data[22], 1);
+
+    /* EVT 0x23 record: {ver,src,pos x4,invert x4,fullScale,wheelDia,crcOk} 15B */
+    s.type = SF_TYPE_EVT; s.cid = SF_CID_DPT_REC; s.seq = seq++; s.flags = 0;
+    s.len = 15; memset(s.data, 0, sizeof(s.data));
+    s.data[0] = 1; s.data[1] = 1;                         /* ver, src=DFlash  */
+    s.data[2] = 0; s.data[3] = 2; s.data[4] = 3; s.data[5] = 1; /* A/B/C/D    */
+    s.data[6] = (uint8_t)-1;
+    proto_put_u16(&s.data[10], 3250);                     /* fullScale        */
+    proto_put_u16(&s.data[12], 125);                      /* wheelDia         */
+    s.data[14] = 1;                                       /* crcOk            */
+    n = sf_encode(&s, wire, sizeof(wire));
+    sf_parser_init(&p);
+    for (i = 0; i < (int)n; i++) { (void)sf_parser_feed(&p, wire[i], &out); }
+    MU_CHECK_EQ(out.cid, SF_CID_DPT_REC);
+    MU_CHECK_EQ(out.len, 15);
+    MU_CHECK_EQ(proto_get_u16(&out.data[10]), 3250);
+    MU_CHECK_EQ(proto_get_u16(&out.data[12]), 125);
+    MU_CHECK_EQ((int8_t)out.data[6], -1);
+    return 0;
+}
+
 int main(void)
 {
     MU_RUN(test_crc_and_roundtrip);
@@ -282,6 +372,7 @@ int main(void)
     MU_RUN(test_fuzz_10M);
     MU_RUN(test_mapping_roundtrip);
     MU_RUN(test_ota_chunk_layout);
+    MU_RUN(test_dpt_calib_frames);
     MU_REPORT("sf");
     return (mu_failed != 0) ? 1 : 0;
 }

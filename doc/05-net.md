@@ -4,7 +4,7 @@
 |---|---|
 | 代码位置 | `components/c6_net/net.c`、`captive_dns.c`、`mdns_lite.c` + 头文件 |
 | 上游需求 | LLDD §4.2（接入网设计）、FR-1 |
-| 状态 | 🟡 **90%** — softAP/DNS/mDNS 实现；Portal HTTP 302 属 httpd 侧尚未做、真机未验 |
+| 状态 | 🟡 **90%** — softAP/DNS/mDNS 实现；弹窗策略可配置（`CONFIG_C6_CAPTIVE_PORTAL`，默认手动输网址），真机未验 |
 
 ## 1. 职责
 
@@ -32,6 +32,18 @@ Wi-Fi 事件（站点增减）向 bridge 的通知、路线 B STA 凭据预留�
 - 应答构造：复制请求头+问题段，置 `QR=1 AA=1`，按 qdcount 逐条追加
   压缩指针（0xC00C）型答案；
 - 任务 `captive_dns`（prio 4，3 KB 栈），阻塞 recvfrom 循环。
+- **仅在 `CONFIG_C6_CAPTIVE_PORTAL=y` 时启动**（见 §3a）。
+
+### 3a. 自动弹窗 vs 手动输网址（`CONFIG_C6_CAPTIVE_PORTAL`）
+
+联网后是否自动弹出控制页由 `CONFIG_C6_CAPTIVE_PORTAL` 控制（`main/Kconfig.projbuild`，**默认 n = 手动**）：
+
+| 开关 | 行为 | 手机连上 AP 后 |
+|---|---|---|
+| `y` 自动弹窗 | net 启动通配 captive DNS；httpd 通配 handler 对探测请求 `302 → /` | iOS/Android 弹出 captive-portal webview |
+| `n`（默认）手动 | **不启动**通配 DNS；httpd 通配 handler 对探测**返回成功响应**（iOS/macOS/Windows 返回含 `Success` 的 200；Android `generate_204`/`gen_204` 返回 204），其余未知路径 404 | 系统判定"网络正常"，**不弹窗**；用户手动在浏览器输入 `http://192.168.4.1/` 或 `http://mycar.local/`（mDNS 两种模式都保留） |
+
+要点：弹窗依赖"通配 DNS 劫持探测域名 + HTTP 探测被 302"两者共同作用；手动模式必须**同时**关掉 DNS 劫持并让探测正常成功，否则探测被劫持却拿不到期待响应，部分机型反而仍会弹窗或提示"无法连接互联网"。mDNS（`mycar.local`）与两种模式无关，始终可用于手动访问。
 
 ## 4. mdns_lite（自实现，决策 C2）
 
@@ -75,8 +87,8 @@ esp_err_t mdns_lite_start(const char *hostname, const char *instance, const char
 | # | 功能 | 状态 | 说明 |
 |---|---|---|---|
 | N-1 | softAP（SSID/密码/信道/max_conn） | 🟩 | 待真机确认扫描/连接 |
-| N-2 | Captive DNS 野答 | 🟩 | 报文格式经构造；未抓包验证 |
-| N-3 | Captive Portal HTTP 302 | 🔴 | LLDD 要求"非本机 Host 头 302 → /"；当前只有 DNS 野答，无 HTTP 层重定向 handler（iOS/Android 部分场景仅靠 DNS 也能弹窗） |
+| N-2 | Captive DNS 野答 | 🟩 | 报文格式经构造；未抓包验证；**仅 `CONFIG_C6_CAPTIVE_PORTAL=y` 启动** |
+| N-3 | 弹窗策略（`CONFIG_C6_CAPTIVE_PORTAL`） | 🟩 | 默认 **n=手动输网址**：探测返回成功响应（200 `Success` / 204），不弹窗；y=通配 DNS + HTTP 302 弹窗。见 §3a，待真机验证 |
 | N-4 | mDNS（A + _http._tcp） | 🟩 | 简化实现；`mycar.local` 解析待真机 |
 | N-5 | 站点计数 → LINK_STATE | ✅ | 回调链已接 |
 | N-6 | STA 路线 B | ⚪ | 凭据 NVS 读写就绪，模式切换/OTA 拉取 V1.1 |
