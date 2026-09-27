@@ -15,6 +15,7 @@
 
 #include "captive_dns.h"
 #include "mdns_lite.h"
+#include "sdkconfig.h"
 
 static const char *TAG = "c6_net";
 
@@ -174,11 +175,20 @@ esp_err_t net_start(const net_cfg_t *cfg)
         return err;
     }
 
+#if CONFIG_C6_CAPTIVE_PORTAL
+    /* wildcard DNS hijack is what makes the phone's probe resolve to us and
+     * pop the portal; skip it in manual-URL mode so name resolution behaves
+     * normally and no auto-popup is triggered (mDNS below still resolves
+     * mycar.local for the user who types it). */
     err = captive_dns_start(net_ip_str());
     if (err != ESP_OK)
     {
         ESP_LOGW(TAG, "captive DNS failed: %s", esp_err_to_name(err));
     }
+#else
+    ESP_LOGI(TAG, "captive DNS disabled (manual-URL mode); open %s or mycar.local",
+             net_ip_str());
+#endif
     err = mdns_lite_start("mycar", cfg->ssid, net_ip_str());
     if (err != ESP_OK)
     {

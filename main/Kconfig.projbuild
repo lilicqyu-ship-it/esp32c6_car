@@ -65,4 +65,19 @@ menu "c6_car project"
             LLDD FR-10: proto v2 frames over TCP 8080 for demo clients.
             Recommended only for the first production batches (Q4).
 
+    config C6_CAPTIVE_PORTAL
+        bool "Auto-popup captive portal (wildcard DNS + probe redirect)"
+        default n
+        help
+            When enabled (y): the wildcard captive DNS hijacks every A query to
+            the AP IP and the HTTP wildcard handler 302-redirects the phone's
+            connectivity probes to "/", so iOS/Android auto-pop the control
+            page in a captive-portal webview.
+
+            When disabled (n, default): no DNS hijack, and the connectivity
+            probes are answered as SUCCESS (iOS "Success" page / Android 204)
+            so the phone reports the network as online and does NOT pop a
+            window.  The user opens the page manually by typing the address
+            (http://192.168.4.1/ or http://mycar.local/ via mDNS).
+
 endmenu
