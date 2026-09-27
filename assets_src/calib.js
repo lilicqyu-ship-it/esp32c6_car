@@ -48,13 +48,42 @@ const $ = (id) => document.getElementById(id);
 function setState(msg, tone) { $("state").textContent = msg; $("state").dataset.tone = tone; }
 const state = {
   token: sessionStorage.getItem("sd_token") || new URLSearchParams(location.search).get("token") || "",
-  ws: null, ctrl: false, tc: false,
+  ws: null, wsOn: false, ctrl: false, tc: false,
   running: false, lastTrigger: 0, runTimer: 0,     /* 判向标定状态机 */
+  calib: { done: false, status: -1, invert: null }, /* ② 最近一轮判向结果 */
   jog: { motor: -1, dir: 0, timer: 0 },            /* 逐电机点动（同一时刻至多一路） */
-  rec: null, recPending: "",                       /* 0x23 生效参数 + 回执提示 */
+  jogged: false,                                   /* ③ 是否点动复核过 */
+  jogGated: false,                                 /* ③ 故障锁存门禁，跃变时刷一次按钮 */
+  rec: null, recPending: "", recOk: false,         /* 0x23 生效参数 + 回执提示 */
   tele: { ml: 0, mr: 0, tl: 0, tr: 0, fault: 0, ts: 0 },
 };
 const RUN_WINDOW_MS = 3000;                      /* 发帧后的互锁窗口（doc/17 §2.3/§2.4）；进度条 1.4s 见 calib.html #caltbl_bar */
+
+/* ---- 流程骨架（doc/17 §9）：①前提 → ②判向 → ③复核 → ④落库 ----
+ * 前提四项任一不满足就不给开始标定；步骤条只做引导，不额外引入约束。 */
+const PRE = [
+  { li: "pr_ws",   t: "连接",   ok: () => state.wsOn },
+  { li: "pr_ctrl", t: "控制权", ok: () => state.ctrl },
+  { li: "pr_tc",   t: "车在线", ok: () => state.tc },
+  { li: "pr_air",  t: "四轮离地", ok: () => $("ck_airborne").checked },
+];
+function preOk() { return PRE.every((p) => p.ok()); }
+function setStep(n, cls) { $("st_" + n).className = "step" + (cls ? " " + cls : ""); }
+function refreshFlow() {
+  const miss = [];
+  for (const p of PRE) {
+    const good = p.ok(), el = $(p.li);
+    el.className = good ? "ok" : "miss";
+    el.firstElementChild.textContent = good ? "✓" : "○";
+    if (!good) miss.push(p.t);
+  }
+  $("pre_need").textContent = miss.length ? "还差：" + miss.join("、") : "四项已满足，可做第②步";
+  setStep(1, preOk() ? "done" : "act");
+  setStep(2, state.calib.done ? "done" : (state.calib.status > 0 ? "bad" : (preOk() ? "act" : "")));
+  setStep(3, state.jogged ? "done" : (jogFaultGated() ? "bad" : (state.calib.done ? "act" : "")));
+  setStep(4, state.recOk === 1 ? "done" : (state.recOk === 2 ? "bad" : (state.calib.done ? "act" : "")));
+  refreshCalibBtn(); refreshJogBtns(); refreshRecBtns();
+}
 
 /* ---- WebSocket ---- */
 function wsUrl() {
@@ -67,14 +96,16 @@ function connect() {
   state.ws.binaryType = "arraybuffer";
   state.ws.onopen = () => {
     wsBackoff = 1000;
+    state.wsOn = true;
     $("dot_ws").className = "dot on";
     sendDrive(0, 0, true);                       /* 建链即清零目标，等价 joyEnd */
+    refreshFlow();
   };
   state.ws.onclose = () => {
-    $("dot_ws").className = "dot off"; state.ctrl = false;
+    $("dot_ws").className = "dot off"; state.ctrl = false; state.wsOn = false;
     jogStop();
     calibAbortOnDisconnect();
-    refreshCalibBtn(); refreshJogBtns(); refreshRecBtns();
+    refreshFlow();
     setTimeout(connect, wsBackoff);
     wsBackoff = Math.min(wsBackoff * 2, 8000);
   };
@@ -99,12 +130,13 @@ function onCtl(m) {
     state.ctrl = (m.role === "ctrl");
     $("ver").textContent = "fw " + m.ver;
     setState(state.ctrl ? "已连接 (控制端)" : "已连接 (观察端，需配对)", state.ctrl ? "ok" : "warn");
-    refreshCalibBtn(); refreshJogBtns(); refreshRecBtns();
+    refreshFlow();
     if (state.ctrl) requestRec();                /* 进入页面即拉当前生效参数（§8.3） */
   } else if (m.t === "tc") {
     state.tc = !!m.on;
     $("dot_tc").className = "dot " + (m.on ? "on" : "off");
     if (state.ctrl) setState(state.tc ? "已连接 (控制端)" : "车端未连接", state.tc ? "ok" : "dim");
+    refreshFlow();
   } else if (m.t === "cal") {
     onCalibResult(m);
   } else if (m.t === "rec") {
@@ -152,10 +184,10 @@ setInterval(() => sendDrive(0, 0, false), 33);   /* 30 Hz 心跳（驾驶保活�
  * idle → confirm → sending → running(3s) → done/timeout */
 function refreshCalibBtn() {
   $("btn_calib").disabled =
-    state.running || state.jog.motor >= 0 || !state.ctrl || !$("ck_airborne").checked ||
+    state.running || state.jog.motor >= 0 || !preOk() ||
     (Date.now() - state.lastTrigger < RUN_WINDOW_MS);
 }
-$("ck_airborne").addEventListener("change", refreshCalibBtn);
+$("ck_airborne").addEventListener("change", refreshFlow);
 
 /* 进度条：走条 1.4s（CSS transition），复位走瞬时 */
 function setProgress(run) {
@@ -170,7 +202,7 @@ function setProgress(run) {
 }
 
 function startCalib() {
-  if (!state.ctrl || state.running || state.jog.motor >= 0 || !$("ck_airborne").checked) return;
+  if (state.running || state.jog.motor >= 0 || !preOk()) return;
   if (Date.now() - state.lastTrigger < RUN_WINDOW_MS) return;   /* 防连点 */
   if (!state.ws || state.ws.readyState !== 1) return;
   if (!confirm("判向标定将驱动车轮逐个转动（每轮约 250ms，共约 1.4s）。\n" +
@@ -178,10 +210,11 @@ function startCalib() {
 
   state.running = true;
   state.lastTrigger = Date.now();
+  state.calib = { done: false, status: -1, invert: null };      /* 本轮结果待回传 */
   sendCmd(CMD.CAL_DIR, new Uint8Array(0));         /* 一次确认只发一帧 0x70 */
   $("calib_msg").textContent = "标定进行中：车轮将逐个短暂转动…";
   setProgress(true);
-  refreshCalibBtn(); refreshJogBtns();
+  refreshFlow();
   clearTimeout(state.runTimer);
   state.runTimer = setTimeout(calibTimeout, RUN_WINDOW_MS);
 }
@@ -191,7 +224,7 @@ function calibEnd() {
   state.running = false;
   clearTimeout(state.runTimer);
   setProgress(0);
-  refreshCalibBtn(); refreshJogBtns();
+  refreshFlow();
 }
 function calibTimeout() {                           /* 无结果回传时的降级（doc/17 §2.4） */
   calibEnd();
@@ -209,39 +242,46 @@ const SAVED_TXT = { 0: "未持久化", 1: "已写 DFlash", 2: "DFlash 写入失�
 function onCalibResult(m) {
   const reasons = { 1: "急停中止", 2: "忙：已有标定在跑" };
   const st = m.status | 0;
-  calibEnd();
+  calibEnd();                                       /* 内部会 refreshFlow，需在其后落状态 */
+  state.calib = { done: st === 0, status: st, invert: m.invert.slice(0, 4) };
   for (let i = 0; i < 4; i++) {
     const d = m.delta[i] | 0, inv = m.invert[i] | 0;
     $("d" + i).textContent = (d > 0 ? "+" : "") + d;
     $("j" + i).textContent = "→" + (inv < 0 ? "-1" : "+1");
-    const s = $("s" + i);
+    const s = $("s" + i), v = $("jv" + i);
+    let txt, cls;
     $("d" + i).className = "";
     if (d === 0) {
       /* status!=0 时 delta=0 是"该轮尚未测到"（固件对未测轮填 0），不是死通道 */
       if (st === 0) {
-        s.textContent = "无计数：查编码器接线";
-        s.className = "bad"; $("d" + i).className = "bad";
+        txt = "无计数：查编码器接线"; cls = "bad"; $("d" + i).className = "bad";
       } else {
-        s.textContent = "未测（本轮未执行）"; s.className = "dim";
+        txt = "未测（本轮未执行）"; cls = "dim";
       }
     } else if (inv < 0) {
-      s.textContent = "已翻转"; s.className = "flip";
+      txt = "已翻转"; cls = "flip";
     } else {
-      s.textContent = "正常"; s.className = "okv";
+      txt = "正常"; cls = "okv";
     }
+    s.textContent = txt; s.className = cls;
+    /* 同一结论落到③的 jog 行旁，点动复核时不必回头翻表 */
+    v.textContent = "② " + txt + "（计数 " + (inv < 0 ? "-1" : "+1") + "）";
+    v.className = "jver " + cls;
   }
   if (st !== 0) {
     $("calib_msg").textContent = "标定未完成：status=" + st +
       "（" + (reasons[st] || "未知状态") + "）" +
       (st === 1 ? "，下表为已测轮结果" : "");
+    refreshFlow();
     return;
   }
   $("calib_msg").textContent = "标定完成（" + (SAVED_TXT[m.saved | 0] || "保存状态未知") +
-    "）。生效参数刷新中…";
+    "）。③ 可点动复核真轮转向，④ 生效参数刷新中…";
   requestRec();                                     /* 判向自动持久化后回读（§8.3） */
+  refreshFlow();
 }
 
-/* ================= 卡片C：逐电机点动（doc/17 §8.1） =================
+/* ================= ③ 逐电机点动复核（doc/17 §8.1） =================
  * 0x71 MOTOR_JOG {motor u8, duty i16LE}，按住 30Hz 刷新，松手发 duty=0 一次；
  * 固件侧 300ms 无刷新自动停（双层保险）。与判向标定互斥。 */
 function jogSend(motor, duty) {
@@ -251,9 +291,10 @@ function jogSend(motor, duty) {
 function jogStart(motor, dir) {
   if (!state.ctrl || state.running || state.jog.motor >= 0) return;
   state.jog.motor = motor; state.jog.dir = dir;
+  state.jogged = true;
   jogSend(motor, dir * JOG_DUTY);
   state.jog.timer = setInterval(() => jogSend(state.jog.motor, state.jog.dir * JOG_DUTY), 33);
-  refreshCalibBtn(); refreshJogBtns();
+  refreshFlow();
 }
 function jogStop() {
   if (state.jog.motor < 0) return;
@@ -261,14 +302,15 @@ function jogStop() {
   const m = state.jog.motor;
   state.jog.motor = -1; state.jog.dir = 0;
   jogSend(m, 0);                                   /* 松手补发 0（断线时 sendCmd 自带守卫） */
-  refreshCalibBtn(); refreshJogBtns();
+  refreshFlow();
 }
 function refreshJogBtns() {
+  const gated = jogFaultGated();
   for (let m = 0; m < 4; m++) {
     const mine = state.jog.motor === m;
     $("jn" + m).classList.toggle("on", mine && state.jog.dir < 0);
     $("jp" + m).classList.toggle("on", mine && state.jog.dir > 0);
-    const dis = !state.ctrl || state.running || (state.jog.motor >= 0 && !mine);
+    const dis = !state.ctrl || state.running || (state.jog.motor >= 0 && !mine) || gated;
     $("jn" + m).disabled = dis;
     $("jp" + m).disabled = dis;
   }
@@ -277,6 +319,14 @@ function refreshJogBtns() {
     if (el) el.classList.toggle("jogging", state.jog.motor >= 0 &&
       motorOfSlot(s) === state.jog.motor);
   }
+  const hint = $("car_hint");
+  hint.textContent = gated
+    ? "⚠ 故障锁存中：车端会拒绝 jog（doc/17 §8.1），请先排除故障。轮上字母按 0x23 回传的位置动态标注。"
+    : "遥测超过 1s 未更新则置灰；红框为故障锁存。轮上字母按 0x23 回传的位置动态标注。";
+}
+/* 故障门禁只看"新鲜遥测"：台架上没跑起来时 tele 为空，不该因此锁死按钮 */
+function jogFaultGated() {
+  return state.tele.ts && (Date.now() - state.tele.ts <= 1000) && state.tele.fault !== 0;
 }
 for (let m = 0; m < 4; m++) {
   $("jn" + m).addEventListener("pointerdown", (e) => { e.preventDefault(); jogStart(m, -1); });
@@ -286,7 +336,7 @@ for (let m = 0; m < 4; m++) {
   window.addEventListener(e, () => jogStop()));
 document.addEventListener("visibilitychange", () => { if (document.hidden) jogStop(); });
 
-/* ================= 卡片D：参数与 DFlash 持久化（doc/17 §8.3） ================= */
+/* ================= ④ 参数与 DFlash 持久化（doc/17 §8.3） ================= */
 function requestRec() { sendCmd(CMD.REC_GET, new Uint8Array(0)); }
 
 function motorOfSlot(slot) {                        /* pos 值→电机号；无 rec 时用默认映射 */
@@ -294,11 +344,24 @@ function motorOfSlot(slot) {                        /* pos 值→电机号；无
   return pos.indexOf(slot);
 }
 
+/* ② 的判定与 ④ 的生效方向是否一致——不一致说明标定没落库或被 0x73 覆盖 */
+function recVsCalib(m) {
+  const c = state.calib.invert;
+  if (!c || !m) return "";
+  const bad = [];
+  for (let i = 0; i < 4; i++) {
+    if (((c[i] | 0) < 0) !== ((m.invert[i] | 0) < 0)) bad.push(MOTOR_NAMES[i]);
+  }
+  return bad.length ? " · 与②判定不一致⚠（" + bad.join("/") + "）" : " · 与②判定一致";
+}
+
 function onRec(m) {
   state.rec = m;
   const srcTxt = ["默认值", "DFlash", "在线设置"][m.src | 0] || ("src=" + m.src);
+  const diff = recVsCalib(m);
+  state.recOk = m.crcOk ? 1 : 2;                    /* 1 已回读且 CRC 正常，2 CRC 异常 */
   $("rec_src").textContent = "当前生效参数 · 数据来源：" + srcTxt +
-    (m.crcOk ? "" : " · CRC 异常⚠") +
+    (m.crcOk ? "" : " · CRC 异常⚠") + diff +
     "（位置编码 0前左/1前右/2后左/3后右；方向 -1=已翻转，生效于编码器计数）";
   for (let i = 0; i < 4; i++) {
     $("q" + i).textContent = POS_NAMES[m.pos[i] & 3] || "?";
@@ -312,8 +375,7 @@ function onRec(m) {
   if (document.activeElement !== $("in_wd")) $("in_wd").value = m.wheelDia;
   if (state.recPending) { $("rec_msg").textContent = state.recPending; state.recPending = ""; }
   renderCarLabels();
-  refreshJogBtns();
-  refreshRecBtns();
+  refreshFlow();
 }
 
 function refreshRecBtns() {
@@ -343,7 +405,7 @@ $("btn_rec_clear").onclick = () => {
   }
 };
 
-/* ================= 车辆可视化（doc/17 §8.2） =================
+/* ============ ③ 车辆实时监视（doc/17 §8.2，与点动复核同屏） ============
  * 遥测是侧级：左槽（前左/后左）显示 vMeasL，右槽显示 vMeasR。
  * rAF 累积角度；>1s 无遥测置灰；故障红框；jog 轮高亮。 */
 function renderCarLabels() {
@@ -362,6 +424,8 @@ function animTick(ts) {
   const fresh = state.tele.ts && (Date.now() - state.tele.ts <= 1000);
   car.classList.toggle("stale", !fresh);
   car.classList.toggle("estop", fresh && state.tele.fault !== 0);
+  const gated = !!jogFaultGated();                 /* 遥测每帧来，门禁只在跃变时刷按钮 */
+  if (gated !== state.jogGated) { state.jogGated = gated; refreshFlow(); }
   const v = [state.tele.ml, state.tele.mr];        /* 侧级：[左, 右] */
   for (let s = 0; s < 4; s++) {
     const side = (s === 0 || s === 2) ? 0 : 1;     /* fl/rl 左，fr/rr 右 */
@@ -370,7 +434,6 @@ function animTick(ts) {
     $(id).setAttribute("transform",
       `rotate(${wheelAng[s].toFixed(1)} ${WHEEL_CX[id]} ${WHEEL_CY[id]})`);
   }
-  $("cv_l").textContent = v[0]; $("cv_r").textContent = v[1];
   const body = (v[0] + v[1]) / 2;
   $("arrow").classList.toggle("rev", fresh && body < -30);
   $("arrow").style.opacity = (!fresh || Math.abs(body) < 30) ? .25 : .9;
@@ -378,6 +441,7 @@ function animTick(ts) {
 }
 requestAnimationFrame(animTick);
 renderCarLabels();
+refreshFlow();                                     /* 首屏先把①前提清单与步骤条画出来 */
 
 /* ---- STOP / 配对 ---- */
 $("btn_stop").onclick = () => { jogStop(); sendDrive(0, 0, true); };
