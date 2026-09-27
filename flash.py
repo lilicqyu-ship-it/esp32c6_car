@@ -25,7 +25,7 @@ from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parent
 BUILD = PROJECT / "build"
-DEFAULT_PORT = "COM14"
+DEFAULT_PORT = "COM6"
 BAUD = 460800
 CHIP = "esp32c6"  # this helper is c6_car-specific
 
