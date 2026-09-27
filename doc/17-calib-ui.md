@@ -117,7 +117,9 @@ idle → confirm(二次确认弹窗) → sending(发1帧) → running(1.4s+余�
 | 7 | myCar `rt/motor_algo.c` | CPU1 消费请求 → `calibStart`（`MOTOR_stopAll`+`SERVO_reset`）→ 逐轮 250ms +12% duty 脉冲 + 80ms 停顿，共 ≈1.4s → delta<0 翻 `ENCODER_setInvert(-1)`，delta==0 记死通道 → 结束 `ENCCAL= invert[0..3] delta[0..3]`（仅串口） |
 | 8 | 任意急停 | 0x32 或链路失联 → `ENCCAL aborted (estop)`，标定中止 |
 
-**命名冲突（必须在代码注释里写明）**：字节 0x70 在 c6_car 叫 `PROTO_CMD_DPT_ENTER`（`c6_proto/proto_frames.h:78`），在 myCar 叫 `PROTO_CMD_DPT_CAL_DIR`（`mw/proto/protocol.h:33`）——同一字节双语义，对 myCar main 基线的实际语义是**编码器判向标定**。其余 0x71~0x79 在 TC275 侧落入 `default` 被忽略，页面禁止发送。
+**命名冲突（必须在代码注释里写明）**：字节 0x70 在 c6_car 叫 `PROTO_CMD_DPT_ENTER`（`c6_proto/proto_frames.h:78`），在 myCar 叫 `PROTO_CMD_DPT_CAL_DIR`（`mw/proto/protocol.h:36`）——同一字节双语义，对 myCar main 基线的实际语义是**编码器判向标定**。
+
+> **V1.1 订正**：本节 V1.0 原文"其余 0x71~0x79 在 TC275 侧落入 default 被忽略"已随 §8.4 失效——`0x71~0x74` 现为 MOTOR_JOG / REC_GET / REC_SET / REC_CLEAR（myCar 34 §9 同源，两端名字已对齐）；`0x75~0x79` 仍未实现、页面禁发。`proto_frames.h` 里 0x71~0x74 的旧名（`DPT_LED`/`DPT_MOTOR_RUN`/`DPT_ENC_READ`/`DPT_CAL`，来自 LLDD 3.1 的早期规划）从未被任何代码引用，已按本契约改名。
 
 ---
 
