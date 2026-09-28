@@ -30,7 +30,9 @@ CONFIG_ESP_COREDUMP_MAX_TASKS_NUM=16
 # ---- networking budget -----------------------------------------------------------
 # captive DNS pulls every phone-app background probe into httpd; 16 sockets
 # ENFILEd under one phone (CNA webview + browser + app probes), keep headroom
-CONFIG_LWIP_MAX_SOCKETS=24
+# 09-28: 24-slot table filled between zombie reaps during phone
+# refresh bursts; 32 absorbs them (see c6_http http_pool_diag)
+CONFIG_LWIP_MAX_SOCKETS=32
 CONFIG_LWIP_MAX_ACTIVE_TCP=20
 CONFIG_LWIP_SO_REUSE=y
 # IDF default MSL=60 s parks every actively-closed socket in TIME_WAIT for

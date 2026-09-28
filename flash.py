@@ -9,7 +9,9 @@ Commands:
   mon     serial monitor only (Ctrl+C to exit)
 
 The COM port is auto-detected (Espressif / bridge-chip USB VID); override
-with -p COMx.
+with -p COMx.  Works on Windows and macOS/Linux: the IDF environment
+(venv python, IDF path, activation script) is discovered from the EIM
+metadata of the respective install layout.
 
 Examples:
   python flash.py                 # same as: full
@@ -39,29 +41,53 @@ CHIP = "esp32c6"  # this helper is c6_car-specific
 ESPRESSIF_VID = 0x303A
 BRIDGE_VIDS = frozenset((0x10C4, 0x1A86, 0x0403))  # CP210x, CH34x, FTDI
 
-EIM_JSON = Path(r"C:\Espressif\tools\eim_idf.json")
+
+def eim_json_candidates():
+    """EIM writes its install manifest at a per-OS default location."""
+    if sys.platform == "win32":
+        return [Path(r"C:\Espressif\tools\eim_idf.json")]
+    home = Path.home()
+    return sorted(home.glob(".espressif/tools/eim_idf.json"))
+
+
+def _posix_idf_fallbacks():
+    """(venv python, idf, activation script) from ~/.espressif EIM layout,
+    newest version last-wins.  Empty Paths when nothing matches."""
+    home = Path.home()
+    pys = sorted(home.glob(".espressif/tools/python/*/venv/bin/python"))
+    idfs = sorted(home.glob(".espressif/v*/esp-idf"))
+    acts = sorted(home.glob(".espressif/tools/activate_idf_v*.sh"))
+    return (pys[-1] if pys else Path(),
+            idfs[-1] if idfs else Path(),
+            acts[-1] if acts else Path())
 
 
 def find_idf_env():
     """(venv python, IDF_PATH, activation script) from EIM metadata, env vars,
-    then defaults."""
-    if EIM_JSON.exists():
-        try:
-            inst = json.loads(EIM_JSON.read_text(encoding="utf-8"))["idfInstalled"][0]
-            return (Path(inst["python"]), Path(inst["path"]),
-                    Path(inst.get("activationScript", "")))
-        except (json.JSONDecodeError, KeyError, IndexError, TypeError):
-            pass
+    then per-OS defaults."""
+    for meta in eim_json_candidates():
+        if meta.exists():
+            try:
+                inst = json.loads(meta.read_text(encoding="utf-8"))["idfInstalled"][0]
+                return (Path(inst["python"]), Path(inst["path"]),
+                        Path(inst.get("activationScript", "")))
+            except (json.JSONDecodeError, KeyError, IndexError, TypeError):
+                pass
     venv = os.environ.get("IDF_PYTHON_ENV_PATH")
     idf = os.environ.get("IDF_PATH")
     if venv and idf:
-        return (Path(venv) / "Scripts" / "python.exe", Path(idf),
-                Path(r"C:\Espressif\tools\Microsoft.v6.1-beta1.PowerShell_profile.ps1"))
-    return (
-        Path(r"C:\Espressif\tools\python\v6.1-beta1\venv\Scripts\python.exe"),
-        Path(r"C:\esp\v6.1-beta1\esp-idf"),
-        Path(r"C:\Espressif\tools\Microsoft.v6.1-beta1.PowerShell_profile.ps1"),
-    )
+        if sys.platform == "win32":
+            return (Path(venv) / "Scripts" / "python.exe", Path(idf),
+                    Path(r"C:\Espressif\tools\Microsoft.v6.1-beta1.PowerShell_profile.ps1"))
+        return (Path(venv) / "bin" / "python", Path(idf), Path())
+    if sys.platform == "win32":
+        return (
+            Path(r"C:\Espressif\tools\python\v6.1-beta1\venv\Scripts\python.exe"),
+            Path(r"C:\esp\v6.1-beta1\esp-idf"),
+            Path(r"C:\Espressif\tools\Microsoft.v6.1-beta1.PowerShell_profile.ps1"),
+        )
+    py, idf, act = _posix_idf_fallbacks()
+    return (py, idf, act)
 
 
 try:
@@ -150,8 +176,9 @@ def resolve_port(port):
         print(f"[c6] port {dev} ({desc if desc.isascii() else 'usb serial'})")
         return dev
     seen = ", ".join(sorted(p[0] for p in list_serial_ports())) or "none"
-    sys.exit(f"[c6] board COM port not found (ports: {seen}) - "
-             "plug in the board or pass -p COMx")
+    hint = "-p COMx" if os.name == "nt" else "-p /dev/cu.usbmodemXXXX"
+    sys.exit(f"[c6] board port not found (ports: {seen}) - plug in the board "
+             f"(USB cable must be a data cable) or pass {hint}")
 
 
 def ensure_port_free(port):
@@ -172,9 +199,9 @@ def ensure_port_free(port):
 
 
 def run_build():
-    """Compile via idf.py.  On Windows the toolchain PATH lives in the EIM
-    activation script, so the build runs inside an activated PowerShell;
-    elsewhere idf.py is invoked directly."""
+    """Compile via idf.py.  The toolchain PATH lives in the EIM activation
+    script on both platforms: on Windows the build runs inside an activated
+    PowerShell, on macOS/Linux the POSIX activation script is sourced in sh."""
     py, idf, act = find_idf_env()
     if not (idf / "tools" / "idf.py").exists():
         sys.exit(f"IDF not found at {idf}")
@@ -183,9 +210,18 @@ def run_build():
               f". '{act}'; Set-Location '{PROJECT}'; idf.py build")
         r = run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
                  "-Command", ps])
+    elif act.exists():
+        # The EIM script defines idf.py as a shell *function*, which macOS
+        # /bin/sh (POSIX mode) rejects for the dot in the name and falls back
+        # to aliases - dead in a non-interactive shell.  Source it only for
+        # its exports (toolchain PATH, IDF_PATH) and call idf.py explicitly.
+        sh_cmd = (f". '{act}' >/dev/null 2>&1; cd '{PROJECT}' && "
+                  f"'{py}' '{idf}/tools/idf.py' build")
+        r = run(["sh", "-c", sh_cmd])
     else:
         env = dict(os.environ)
         env.pop("MSYSTEM", None)   # idf.py refuses to run under MSys
+        print("[c6] EIM activation script not found - relying on IDF_PATH/PATH")
         r = run([py, idf / "tools" / "idf.py", "build"], cwd=PROJECT, env=env)
     if r.returncode != 0:
         sys.exit("build failed")
