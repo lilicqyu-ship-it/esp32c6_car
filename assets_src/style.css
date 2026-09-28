@@ -61,6 +61,13 @@ header {
 #batt_v { opacity: .75; font-variant-numeric: tabular-nums; }
 @media (max-width: 359px) { #batt_v { display: none; } }
 
+/* control-role badge: tonight's "all green but nothing drives" was an
+ * invisible spectator role - keep the role always on screen */
+#role_pill.ctrl { color: var(--ok); border-color: rgba(52, 217, 123, .4); }
+#role_pill.spec { color: var(--dim); }
+#role_pill.bad  { color: var(--bad); border-color: rgba(255, 92, 92, .45); }
+#role_pill b { font-weight: 600; }
+
 .dot { width: 8px; height: 8px; border-radius: 50%; background: #39434e; flex: none; transition: background .25s; }
 .dot.on { background: var(--ok); box-shadow: 0 0 8px var(--ok); animation: blink 2.4s ease-in-out infinite; }
 .dot.off { background: var(--bad); box-shadow: 0 0 6px rgba(255, 92, 92, .55); }

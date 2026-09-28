@@ -33,10 +33,20 @@ const $ = (id) => document.getElementById(id);
 /* state line text + tone (CSS: .state[data-tone=ok|warn|bad|dim]) */
 function setState(msg, tone) { $("state").textContent = msg; $("state").dataset.tone = tone; }
 const state = {
-  token: sessionStorage.getItem("sd_token") || new URLSearchParams(location.search).get("token") || "",
+  /* localStorage: token survives new tabs / browser restarts - a per-tab
+   * (sessionStorage) token silently demoted every freshly opened tab to
+   * spectator, which read as "everything green but nothing drives" (09-28) */
+  token: localStorage.getItem("sd_token") || sessionStorage.getItem("sd_token")
+         || new URLSearchParams(location.search).get("token") || "",
   ws: null, ctrl: false, tc: false,
   driveTimer: null, joyV: 0, joyW: 0,
 };
+
+function setRole(txt, tone) {
+  const p = $("role_pill");
+  $("role_txt").textContent = txt;
+  p.className = "pill " + tone;
+}
 
 /* ---- WebSocket ---- */
 function wsUrl() {
@@ -44,22 +54,26 @@ function wsUrl() {
   return p + location.host + "/ws" + (state.token ? ("?token=" + state.token) : "");
 }
 let wsBackoff = 1000;
+let wsLastRx = 0, wsLastPing = 0;
 function connect() {
   state.ws = new WebSocket(wsUrl());
   state.ws.binaryType = "arraybuffer";
   state.ws.onopen = () => {
     wsBackoff = 1000;
+    wsLastRx = Date.now();
     $("dot_ws").className = "dot on";
     sendDrive(0, 0);
   };
   state.ws.onclose = () => {
     $("dot_ws").className = "dot off"; state.ctrl = false;
+    setRole("重连中", "bad");
     // fixed 1 s retries churn sockets on the device while it is struggling;
     // back off so recovery is not fought by the page itself
     setTimeout(connect, wsBackoff);
-    wsBackoff = Math.min(wsBackoff * 2, 8000);
+    wsBackoff = Math.min(wsBackoff * 2, 3000);
   };
   state.ws.onmessage = (ev) => {
+    wsLastRx = Date.now();
     if (typeof ev.data === "string") { onCtl(JSON.parse(ev.data)); return; }
     const d = new Uint8Array(ev.data);
     if (d.length >= 8 && d[0] === P_SYNC1 && d[1] === P_SYNC2 && d[3] === CMD.TELEMETRY) {
@@ -68,10 +82,40 @@ function connect() {
   };
 }
 
+/* liveness: a healthy chain pushes telemetry at 50 Hz, so silence means the
+ * socket is half-dead (iOS backgrounding kills it without a close event and
+ * the tab read "green but unresponsive").  probe at 3 s, re-connect at 10 s */
+setInterval(() => {
+  if (!state.ws || state.ws.readyState !== 1) return;
+  const now = Date.now();
+  if (now - wsLastRx > 10000) {
+    state.ws.close();                       /* onclose reconnects */
+  } else if (now - wsLastRx > 3000 && now - wsLastPing > 3000) {
+    wsLastPing = now;
+    try { state.ws.send('{"t":"ping"}'); } catch (e) { /* racing a close */ }
+  }
+}, 1000);
+
+/* iOS suspends background tabs and their sockets die silently: on return,
+ * skip the backoff entirely and resync now, and zero the joystick so a
+ * stale pointer deflection cannot linger as a drive command */
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  joyEnd();
+  if (!state.ws || state.ws.readyState >= 2) {
+    wsBackoff = 0;
+    connect();
+  } else if (Date.now() - wsLastRx > 4000) {
+    wsLastRx = 0;                           /* force the watchdog to reconnect */
+  }
+});
+
 let errT = 0;                     /* pending "错误:" auto-clear timer */
 function onCtl(m) {
   if (m.t === "hello") {    state.ctrl = (m.role === "ctrl");
     $("ver").textContent = "fw " + m.ver;
+    if (state.ctrl) setRole("控制器", "ctrl");
+    else setRole("旁观者", "spec");
   } else if (m.t === "tc") {
     state.tc = !!m.on;
     $("dot_tc").className = "dot " + (m.on ? "on" : "off");
@@ -86,6 +130,14 @@ function onCtl(m) {
     $("ota_progress").textContent = "OTA 失败 " + m.e;
     $("ota_bar").style.width = "0%";
   } else if (m.t === "err") {
+    if (m.e === "auth") {
+      /* role gate rejected a command: the C6 no longer honours this
+       * session (reboot / re-pair elsewhere) - latched, not auto-cleared */
+      state.ctrl = false;
+      setRole("无控制权", "bad");
+      setState("控制权失效 - 请重新配对", "bad");
+      return;
+    }
     // transient hiccup (e.g. command queue momentarily full): show it, then
     // let the state line recover instead of latching a stale error forever
     setState("错误: " + m.e, "warn");
@@ -204,7 +256,9 @@ $("btn_pair").onclick = async () => {
   const r = await fetch("/api/pair", { method: "POST" });
   const j = await r.json();
   if (j.ok && j.token) {
-    state.token = j.token; sessionStorage.setItem("sd_token", j.token);
+    state.token = j.token;
+    localStorage.setItem("sd_token", j.token);
+    sessionStorage.setItem("sd_token", j.token);
     setState("已配对 (控制端)", "ok");
     if (state.ws) state.ws.close();
   } else {
