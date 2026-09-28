@@ -17,6 +17,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include "adxl345.h"
 #include "led.h"
 #include "link.h"
 #include "ota_self.h"
@@ -153,12 +154,12 @@ void app_diag_render(char *json, size_t cap)
     app_diag_t d;
 
     app_diag_snapshot(&d);
-    (void)snprintf(json, cap,
+    int n = (int)snprintf(json, cap,
         "{\"ver\":\"%s\",\"state\":\"%s\",\"slot\":\"%s\",\"factory\":%s,"
         "\"reset\":%u,\"selfcheck\":%u,\"coredump\":%s,\"heap_min\":%u,"
         "\"link\":{\"up\":%s,\"clock\":%u,\"rtt\":%u,\"crc_err\":%u,"
         "\"fmt_err\":%u,\"rx\":%u,\"tx\":%u,\"busy\":%u},"
-        "\"pair\":\"%s\",\"uptime_s\":%u}",
+        "\"pair\":\"%s\",\"uptime_s\":%u",
         esp_app_get_description()->version,
         app_state_name(),
         esp_ota_get_running_partition()->label,
@@ -175,6 +176,27 @@ void app_diag_render(char *json, size_t cap)
         (pair_state() == PAIR_CLAIMED) ? "claimed" :
         ((pair_state() == PAIR_OPEN) ? "open" : "idle"),
         (unsigned)d.uptime_s);
+
+    /* the imu object is appended last (512 B handler buffer has headroom);
+     * stop cleanly instead of appending into a truncated buffer */
+    if ((n < 0) || ((size_t)n >= cap))
+    {
+        return;
+    }
+    n += (int)snprintf(json + n, (size_t)cap - (size_t)n, ",\"imu\":");
+    if ((n < 0) || ((size_t)n >= cap))
+    {
+        return;
+    }
+    if (adxl345_diag_json(json + n, (size_t)cap - (size_t)n) < 0)
+    {
+        return;
+    }
+    n = (int)strlen(json);
+    if ((size_t)n < cap)
+    {
+        (void)snprintf(json + n, (size_t)cap - (size_t)n, "}");
+    }
 }
 
 /* ---- transitions ------------------------------------------------------------------ */

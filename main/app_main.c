@@ -14,6 +14,7 @@
 #include "freertos/task.h"
 
 #include "app_state.h"
+#include "adxl345.h"
 #include "bridge.h"
 #include "factory.h"
 #include "http_server.h"
@@ -137,6 +138,13 @@ void app_main(void)
     if (bridge_start() != ESP_OK)
     {
         ESP_LOGE(TAG, "bridge start failed");
+    }
+
+    /* 3b. local bench sensor, diag-only (never on the v2/SF wire): absent
+     * chip just logs a warning and /diag reports "imu":null */
+    if (adxl345_start() != ESP_OK)
+    {
+        ESP_LOGW(TAG, "adxl345 not started - imu diag disabled");
     }
 
     /* 4. network (softAP + captive DNS + mDNS) */

@@ -1,0 +1,73 @@
+menu "c6_adxl345 (3-axis accelerometer, SPI)"
+
+    config C6_ADXL345_ENABLE
+        bool "Enable ADXL345 accelerometer sampling"
+        default y
+        help
+            Local (C6-side) bench sensor, exposed only through /api/diag - it
+            never enters the v2/SF protocol (safety arbitration stays on the
+            TC275).  When the chip does not answer, start() logs one warning
+            and the diag field reports "imu":null; boot continues normally.
+
+    config C6_ADXL345_SCLK_GPIO
+        int "SCLK GPIO"
+        default 10
+        range 0 23
+        help
+            Bit-banged SPI bus (the single C6 GPSPI is owned by the TC275
+            LINK slave).  Keep every bus pin away from: 4/5/8/9/15
+            (strapping), 12/13 (USB D-/D+), 16/17 (UART0 console),
+            18/19/20/21/23 (LINK SPI), 8 (WS2812).
+
+    config C6_ADXL345_MOSI_GPIO
+        int "MOSI GPIO"
+        default 11
+        range 0 23
+
+    config C6_ADXL345_MISO_GPIO
+        int "MISO GPIO"
+        default 6
+        range 0 23
+        help
+            GPIO6 sits next to CS(7)/SCLK(10)/MOSI(11) on the DevKitC-1 J1
+            header; GPIO14 is not brought out on the headers.
+
+    config C6_ADXL345_CS_GPIO
+        int "CS GPIO (manual, active low)"
+        default 7
+        range 0 23
+
+    config C6_ADXL345_HALF_BIT_US
+        int "SCLK half-bit period, us"
+        default 1
+        range 1 100
+        help
+            1 us -> ~500 kHz SCLK; the ADXL345 accepts up to 5 MHz but the
+            diag sampling does not need it, and a soft clock keeps the CPU
+            cost trivial (~0.1 ms per 6-byte read at 50 Hz).
+
+    config C6_ADXL345_RANGE_G
+        int "Measurement range, g (2/4/8/16, full-resolution mode)"
+        default 16
+        range 2 16
+        help
+            Full-resolution mode keeps 3.9 mg/LSB at any range; the range only
+            sets the clipping ceiling.  16g covers car-level impacts and
+            vibration without saturating; drop to 2g for a tilt-only bench.
+
+    config C6_ADXL345_ODR_HZ
+        int "Output data rate, Hz (12.5/25/50/100/200/400/800/1600)"
+        default 100
+        range 12 1600
+        help
+            Nearest supported rate is programmed into BW_RATE.
+
+    config C6_ADXL345_POLL_MS
+        int "Sample poll period, ms"
+        default 20
+        range 5 1000
+        help
+            20 ms (50 Hz) is plenty for the diag view and keeps the polling
+            task negligible.
+
+endmenu
