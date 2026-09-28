@@ -509,9 +509,73 @@ static esp_err_t api_diag_handler(httpd_req_t *req)
     if (s_http.diag_fn != NULL)
     {
         s_http.diag_fn(json, sizeof(json));
-        return send_json(req, 200, json);
+        ESP_LOGI(TAG, "GET /api/diag (%u B)", (unsigned)strlen(json));
+        /* text/plain, not application/json: a phone navigating here directly
+         * rendered the JSON content type as a blank/eternal-loading tab
+         * (09-28); plain text always displays, and the /diag page's
+         * response.json() parses the body regardless of content type */
+        httpd_resp_set_type(req, "text/plain");
+        return httpd_resp_send(req, json, HTTPD_RESP_USE_STRLEN);
     }
     return send_json(req, 200, "{\"err\":\"no diag provider\"}");
+}
+
+/* Human-readable diag view (bench, 09-28): phones showed a blank tab for the
+ * bare application/json /api/diag document (rendering, not transport - the
+ * 275 B response left the server cleanly), and a raw JSON wall is no diag UI
+ * anyway.  /diag serves a self-contained HTML shell that fetch()es the JSON
+ * every 2 s and renders it readably; a failed fetch prints the error instead
+ * of a silent blank - that alone separates "phone left the AP" from "link
+ * degraded".  /api/diag stays pure JSON for tooling. */
+static const char DIAG_PAGE[] =
+"<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
+"<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+"<title>C6 诊断</title>"
+"<style>body{font-family:-apple-system,sans-serif;margin:12px;background:#14181f;"
+"color:#e8eaed}h1{font-size:1.05rem;margin:0 0 8px}#age{font-size:.75rem;color:#8ab}"
+"table{border-collapse:collapse;width:100%}td,th{padding:3px 8px;"
+"border-bottom:1px solid #2a3140;text-align:left;font-size:.85rem}"
+"th{color:#9fb3c8;font-weight:500}.ok{color:#7dd087}.bad{color:#e57373}"
+"#raw{white-space:pre-wrap;word-break:break-all;font-size:.7rem;color:#7fbf7f;"
+"margin-top:10px;border-top:1px solid #2a3140;padding-top:6px}</style></head><body>"
+"<h1>C6 诊断 <span id=\"age\"></span></h1><div id=\"v\">加载中…</div><div id=\"raw\"></div>"
+"<script>function p(j,k){return (j&&j[k]!=null)?j[k]:\"-\"}\n"
+"let n=0;\n"
+"async function tick(){try{const c=new AbortController();\n"
+"const t=setTimeout(()=>c.abort(),3000);\n"
+"const r=await fetch(\"/api/diag\",{cache:\"no-store\",signal:c.signal});\n"
+"clearTimeout(t);\n"
+"if(!r.ok){throw new Error(\"HTTP \"+r.status)}\n"
+"const j=await r.json();const L=j.link||{};const I=j.imu;\n"
+"let h=\"<table>\";\n"
+"h+=\"<tr><th>固件</th><td>\"+p(j,\"ver\")+\"</td><th>状态</th><td>\"+p(j,\"state\")+\"</td></tr>\";\n"
+"h+=\"<tr><th>槽位</th><td>\"+p(j,\"slot\")+\"</td><th>出厂</th><td>\"+p(j,\"factory\")+\"</td></tr>\";\n"
+"h+=\"<tr><th>运行 s</th><td>\"+p(j,\"uptime_s\")+\"</td><th>堆最小</th><td>\"+p(j,\"heap_min\")+\"</td></tr>\";\n"
+"h+=\"<tr><th>TC275</th><td class=\"+(L.up?\"ok\":\"bad\")+\">\"+(L.up?\"在线\":\"离线\")\n"
+"+\"</td><th>时钟</th><td>\"+p(L,\"clock\")+\"</td></tr>\";\n"
+"h+=\"<tr><th>rtt ms</th><td>\"+p(L,\"rtt\")+\"</td><th>crc/fmt err</th><td>\"+p(L,\"crc_err\")+\" / \"+p(L,\"fmt_err\")+\"</td></tr>\";\n"
+"h+=\"<tr><th>rx/tx</th><td>\"+p(L,\"rx\")+\" / \"+p(L,\"tx\")+\"</td><th>busy</th><td>\"+p(L,\"busy\")+\"</td></tr>\";\n"
+"h+=\"<tr><th>配对</th><td>\"+p(j,\"pair\")+\"</td><th>复位</th><td>\"+p(j,\"reset\")+\"</td></tr>\";\n"
+"if(I){if(I.ok){h+=\"<tr><th>IMU</th><td class=ok>正常</td><th>mg</th><td>\"+(I.mg?I.mg.join(\", \"):\"-\")+\"</td></tr>\";\n"
+"h+=\"<tr><th>幅值</th><td>\"+p(I,\"mag\")+\"</td><th>upd/err</th><td>\"+p(I,\"upd\")+\" / \"+p(I,\"err\")+\"</td></tr>\";}\n"
+"else{h+=\"<tr><th>IMU</th><td class=bad>探测失败</td><th>DEVID</th><td>\"+(I.probe||\"?\")+\" (要求 0xe5)</td></tr>\";\n"
+"h+=\"<tr><th colspan=4>0xff=MISO悬空/SDO未接 · 稳定错误值=时钟或接线错位 · 检查 CS=7 SCL=10 SDA=11 SDO=6 与 3V3/GND</td></tr>\";}}\n"
+"else{h+=\"<tr><th>IMU</th><td colspan=3>null（未启动）</td></tr>\";}\n"
+"h+=\"</table>\";document.getElementById(\"v\").innerHTML=h;\n"
+"document.getElementById(\"raw\").textContent=JSON.stringify(j);\n"
+"document.getElementById(\"age\").textContent=\"更新 \"+new Date().toLocaleTimeString();\n"
+"document.getElementById(\"age\").className=\"\";\n"
+"}catch(e){n++;\n"
+"document.getElementById(\"age\").className=\"bad\";\n"
+"document.getElementById(\"age\").textContent=\"读取失败: \"+e+\" (第\"+n+\"次) - 保留上次数据\"}}\n"
+"tick();setInterval(tick,2000);</script></body></html>\n";
+
+static esp_err_t diag_page_handler(httpd_req_t *req)
+{
+    ESP_LOGI(TAG, "GET /diag");
+    httpd_resp_set_type(req, "text/html");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
+    return httpd_resp_send(req, DIAG_PAGE, HTTPD_RESP_USE_STRLEN);
 }
 
 static esp_err_t api_pair_handler(httpd_req_t *req)
@@ -652,33 +716,73 @@ static void http_close_cb(httpd_handle_t hd, int sockfd)
 }
 
 /* ========================================================================== */
-/* Connected-socket inventory (bench diagnostic, 09-27 "page never loads
- * again" incident): that incident presented only as accept() EMFILE with no
- * further clues, and IDF's lwIP keeps no per-pool stats (MEMP_MEM_MALLOC=1).
- * Enumerate fds via SO_TYPE + getpeername so the next occurrence carries its
- * own evidence: which fd holds which peer, how many live sockets there are.
- * UDP/listening sockets have no peer and are skipped by design. */
+/* Connected-socket inventory + zombie reaper (bench diagnostic, 09-27 "page
+ * never loads again" incident and its 09-28 relapse): that incident presented
+ * only as accept() EMFILE with no further clues, and IDF's lwIP keeps no
+ * per-pool stats (MEMP_MEM_MALLOC=1).  Enumerate fds via SO_TYPE +
+ * getpeername so the next occurrence carries its own evidence: which fd holds
+ * which peer, how many live sockets there are.
+ *
+ * 09-28 relapse evidence: accept() EMFILE persisted while the connected-only
+ * inventory showed live=0 - the 24-slot socket table was full of TCP sockets
+ * whose pcb was already gone (peer left, fd never closed), which getpeername
+ * reports as ENOTCONN and the old inventory skipped by design.  So besides
+ * naming them, the timer now REAPS them: TCP + not-listening + no peer means
+ * nobody owns that fd's connection anymore - close it so accept() recovers.
+ * UDP (mdns) and the listening socket are skipped; every TCP socket in this
+ * firmware belongs to the httpd. */
 #define DIAG_FD_MAX 128
 #define DIAG_PEERS_CAP 320
 static void http_pool_diag(void *unused)
 {
     (void)unused;
+    static uint8_t tick_div;                 /* full inventory log every 8th run */
     int live = 0;
+    int zombies = 0;
     char peers[DIAG_PEERS_CAP];
+    char zlist[48];
     size_t off = 0;
+    size_t zoff = 0;
 
     peers[0] = '\0';
+    zlist[0] = '\0';
     for (int fd = 0; fd < DIAG_FD_MAX; fd++)
     {
         struct sockaddr_storage ss;
         socklen_t sl = sizeof(ss);
         int type = 0;
         socklen_t tl = sizeof(type);
+        int listening = 0;
 
         if ((getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &tl) != 0) ||
-            (getpeername(fd, (struct sockaddr *)&ss, &sl) != 0))
+            (tl != sizeof(type)))
         {
-            continue;                    /* not an open connected socket */
+            continue;                    /* not an open socket */
+        }
+        (void)getsockopt(fd, SOL_SOCKET, SO_ACCEPTCONN, &listening, &tl);
+        const bool is_tcp = (type == SOCK_STREAM);
+        const bool has_peer =
+            (getpeername(fd, (struct sockaddr *)&ss, &sl) == 0);
+
+        if (is_tcp && !listening && !has_peer)
+        {
+            /* dead connection, fd still open: the socket-table eater */
+            if (zoff < (sizeof(zlist) - 8u))
+            {
+                zoff += (size_t)snprintf(zlist + zoff, sizeof(zlist) - zoff,
+                                         "%s%d", (zombies != 0) ? "," : "", fd);
+            }
+            zombies++;
+            if ((s_http.hd != NULL) &&
+                (httpd_sess_trigger_close(s_http.hd, fd) != ESP_OK))
+            {
+                (void)closesocket(fd);   /* not an httpd session: raw close */
+            }
+            continue;
+        }
+        if (!has_peer)
+        {
+            continue;                    /* UDP / listening: healthy by design */
         }
         /* accepted IPv4 connections on the dual-stack listener report
          * AF_INET6 with a ::ffff:x.y.z.w mapped peer - decode it back */
@@ -722,7 +826,14 @@ static void http_pool_diag(void *unused)
             break;                       /* keep the log line bounded */
         }
     }
-    ESP_LOGI(TAG, "SOCK live=%d ws_sess=%d:%s", live, ws_sess_count(), peers);
+    if (zombies != 0)
+    {
+        ESP_LOGW(TAG, "SOCK reaped %d zombie fd(s): [%s]", zombies, zlist);
+    }
+    if (tick_div++ == 0u)
+    {
+        ESP_LOGI(TAG, "SOCK live=%d ws_sess=%d:%s", live, ws_sess_count(), peers);
+    }
 }
 
 /* lifecycle                                                                  */
@@ -812,6 +923,7 @@ esp_err_t http_start(void)
         { .uri = "/favicon.ico", .method = HTTP_GET, .handler = assets_handler },
         { .uri = "/api/health",.method = HTTP_GET,  .handler = api_health_handler },
         { .uri = "/api/diag",  .method = HTTP_GET,  .handler = api_diag_handler },
+        { .uri = "/diag",      .method = HTTP_GET,  .handler = diag_page_handler },
         { .uri = "/api/pair",  .method = HTTP_POST, .handler = api_pair_handler },
         { .uri = "/ota/c6",    .method = HTTP_POST, .handler = ota_upload_handler },
         { .uri = "/ota/tc275", .method = HTTP_POST, .handler = ota_upload_handler },
@@ -833,8 +945,12 @@ esp_err_t http_start(void)
     cfg.stack_size         = 8192;
     cfg.uri_match_fn       = httpd_uri_match_wildcard;
     cfg.lru_purge_enable   = true;
-    cfg.recv_wait_timeout  = 10;
-    cfg.send_wait_timeout  = 10;
+    /* 10 s parks Safari's speculative preconnects - connections that get RST
+     * before any request bytes - as pcb-less sessions that hog the lwIP
+     * socket table through a refresh burst (09-28 "refresh until dead").
+     * 3 s releases them fast; genuine phones send within milliseconds. */
+    cfg.recv_wait_timeout  = 3;
+    cfg.send_wait_timeout  = 3;
     cfg.close_fn           = http_close_cb;
     /* Phones disconnect silently (lock screen / left the AP / app killed): no
      * FIN ever arrives, httpd has no idle timeout, and nothing else would ever
@@ -868,14 +984,17 @@ esp_err_t http_start(void)
     }
     ESP_LOGI(TAG, "httpd up (v%s)", s_http.fw_ver);
     {
-        /* see http_pool_diag() above; bench-visible at default log level */
+        /* see http_pool_diag() above; bench-visible at default log level.
+         * 1 s reap cadence: tab-switching phones reload pages in bursts that
+         * leave ~10 dead fds each - at 15 s the table filled between runs and
+         * accept() EMFILEd for seconds (09-28 relapse, 239 s window). */
         const esp_timer_create_args_t dtargs = {
             .callback = http_pool_diag,
             .name     = "http_pool",
         };
         esp_timer_handle_t dtimer = NULL;
         if ((esp_timer_create(&dtargs, &dtimer) == ESP_OK) &&
-            (esp_timer_start_periodic(dtimer, 15u * 1000000u) != ESP_OK))
+            (esp_timer_start_periodic(dtimer, 1000000u) != ESP_OK))
         {
             (void)esp_timer_delete(dtimer);
         }
