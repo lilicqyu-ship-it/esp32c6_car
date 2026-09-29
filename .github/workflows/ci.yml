@@ -1,6 +1,10 @@
 # CI: host unit tests + firmware build against sdkconfig.defaults
 # (the local dev sdkconfig is untracked/bench-flavored on purpose - CI is the
 # production-flavor gate; releases are cut from the same defaults).
+# The firmware job also runs tools/ci_size_report.py (same as smartcar_remote):
+# flash/RAM usage with free-margin percentages into the job summary, failing
+# the build past the size gates (app <= 90% of the OTA slot, static DIRAM
+# <= 95%, extra images must fit their partition).
 name: CI
 
 on:
@@ -24,7 +28,7 @@ jobs:
         run: make -C test/host check
 
   firmware:
-    name: Firmware build (IDF v6.1-beta1)
+    name: Firmware build + size gates (IDF v6.1-beta1)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -52,6 +56,15 @@ jobs:
         run: |
           . ~/esp-idf/export.sh
           idf.py build
+
+      - name: Firmware size & resource margins
+        run: |
+          . ~/esp-idf/export.sh
+          python tools/ci_size_report.py \
+            --map build/c6_car.map \
+            --bin build/c6_car.bin \
+            --partitions partitions.csv \
+            --extra-bin assets=build/assets.bin
 
       - name: Report
         run: |
