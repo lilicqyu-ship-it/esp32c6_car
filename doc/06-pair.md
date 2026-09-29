@@ -48,6 +48,10 @@
 拒绝路径：窗口外 → TC275 REJECT → HTTP 403 `no window`；已 CLAIMED → 409 busy；
 3 s 无 CONFIRM → 504 timeout；LINK 不可用 → 503。
 
+第二控制端 S3 遥控器（smartcar_remote P6 Pairing 页）复用同一 REST 流程与拒绝码
+（403/409/504/503 → 对应引导文案），token 存遥控器侧 NVS（namespace `scr`），
+之后 WS 升级带 `?token=` 重连免按键——与手机页 localStorage 同语义，C6 侧零改动。
+
 ## 4. token 与宽限设计
 
 | 项 | 设计 | 落点 |

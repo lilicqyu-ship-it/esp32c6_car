@@ -10,13 +10,19 @@
 > 已换向 SPI 并改用 SF 帧（SDD V1.2 §6.1a / myCar doc 22），v2↔SF 字段映射在
 > c6_link 内完成（见 [14-sf-link.md](14-sf-link.md) §5）。0x43 PING / 0x44 BAUD
 > 为 UART 时代产物，常量已从本组件删除（22 号 T2）。
+>
+> **客户端口径更新（2026-09-29）**：v2 帧的 WS 一侧现有两类客户端——手机控制页
+> 与 S3 遥控器（`../smartcar_remote`，`main/proto/` **原样拷贝**本组件源文件，
+> 字节级一致），二者共用下表全部 CMD 语义，C6 不区分对待。
 
 ## 1. 职责
 
 LINK（C6↔TC275）与 WS 二进制通道共用的唯一帧编解码实现：
 帧序列化、逐字节解析状态机、CRC16、遥测载荷编解码、LE 字段访问帮助函数。
 **硬规则**：纯 C99、无任何 OS/IDF/TriCore 头、无动态内存——同一文件被
-C6（RISC-V 小端）、TC275（TriCore 大端，待升级 v2 时直拷）、主机单测三方编译。
+C6（RISC-V 小端）、TC275（TriCore 大端，待升级 v2 时直拷）、S3 遥控器
+（ESP32-S3/RISC-V 小端，`smartcar_remote/main/proto/` 原样拷贝）、主机单测
+四方编译。
 
 ## 2. 帧格式
 

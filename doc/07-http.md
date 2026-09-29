@@ -74,10 +74,15 @@ typedef struct {
 
 | 方向 | 消息 |
 |---|---|
-| C6→手机 | `hello{role,ver,tc,pair,ctrl}`（连接建立后一次）、`pong`、`tc{on}`（LINK 上下行）、`baud{v}`、`otastatus{state,pct}`、`otaswap`、`otaerror`、`err{e}` |
-| 手机→C6 | `ping` |
+| C6→控制端 | `hello{role,ver,tc,pair,ctrl}`（连接建立后一次）、`pong`、`tc{on}`（LINK 上下行）、`baud{v}`、`otastatus{state,pct}`、`otaswap`、`otaerror`、`err{e}` |
+| 控制端→C6 | `ping` |
 
 **一切驾驶数据走二进制 proto 帧**（LLDD §3.2），文本面仅会话协商。
+
+控制端两类客户端（2026-09-29 起，见 [00-overview.md](00-overview.md) 控制端行）：
+手机控制页全量消费（OTA 系消息仅手机页使用）；S3 遥控器消费 `hello/tc/pong/err`、
+忽略其余文本消息，自定时 `ping` 1 Hz 测 RTT、10 s 无任何下行即整链重连——
+均对齐手机页 app.js 口径。
 
 ## 7. assets_store（assets 分区）
 

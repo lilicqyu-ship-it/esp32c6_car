@@ -6,6 +6,7 @@
 | 日期 | 2026-09-26 |
 | 上游 | [21-software-design.md](../../myCar/doc/20-design/21-software-design.md)（量产 SDD，**设计基准**）→ [22-link-spi-design.md](../../myCar/doc/20-design/22-link-spi-design.md)（板间 SPI/SF 帧详细设计）→ [41-c6-docs-map.md](../../myCar/doc/40-esp32c6/41-c6-docs-map.md)（两仓库文档分工与跨仓 TODO）→ 本目录（各模块详细设计 + 完成状态） |
 | 代码基线 | `c6_car` 工作区（`idf.py build` 通过，`build/c6_car.bin` ≈ 1.05 MB） |
+| 控制端 | 手机 Web 控制页（`assets_src/`，烧入 assets 分区）＋ ESP32-S3 LCD 遥控器（平级仓库 `../smartcar_remote`，2026-09-29 起：proto v2 编解码原样复用本仓 c6_proto，协议面零改动对接，**双端联调待做**） |
 
 ## 状态图例
 
@@ -22,7 +23,7 @@
 | 文档 | 模块 | 代码位置 | 需求追溯 | 完成度 | 验证状态 |
 |---|---|---|---|---|---|
 | [01](01-app-state.md) | 应用状态机与启动编排 | `main/app_main.c` `main/app_state.c` | LLDD §4.1/§4.10 | 🟡 90% | 🟩 编译通过；link_task TWDT 已补 |
-| [02](02-proto.md) | proto v2 编解码（手机/WS 侧） | `components/c6_proto/` | SDD V1.2 §6.1b / LLDD §3.1 | ✅ 100% | ✅ 主机单测 12 项 + 10⁷ 模糊 |
+| [02](02-proto.md) | proto v2 编解码（手机/WS 侧，S3 遥控器同源复用） | `components/c6_proto/` | SDD V1.2 §6.1b / LLDD §3.1 | ✅ 100% | ✅ 主机单测 12 项 + 10⁷ 模糊 |
 | [03](03-factory.md) | 出厂数据（NVS） | `components/c6_factory/` | LLDD §4.8 | 🟡 90% | 🟩 编译通过；写入入口（DPT）未接 |
 | [04](04-link.md) | LINK 链路（**SPI 从机**） | `components/c6_link/` `components/c6_sf/` | myCar doc 22 / SDD V1.2 §6.1a / FR-3 | 🟩 代码完成 | 🟩 G1/G2 通过；波形兼容与台架门禁待测 |
 | [05](05-net.md) | 接入网 | `components/c6_net/` | LLDD §4.2 / FR-1 | 🟡 95% | 🟩 编译通过；Portal 弹窗真机验证（09-26）；mDNS 解析待手机实测 |

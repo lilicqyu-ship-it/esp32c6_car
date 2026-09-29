@@ -18,7 +18,7 @@ Wi-Fi 事件（站点增减）向 bridge 的通知、路线 B STA 凭据预留�
 | SSID | `SD-` + SN 末 6 位 | `factory_ap_ssid()` |
 | 密码 | NVS `wifi_pass`（WPA2-PSK） | 出厂 12+ 位随机，标签印刷 |
 | 信道 | NVS `ch`，默认 6 | 仅允许 1/6/11 |
-| max_connection | 4 | 1 控制 + 2 观赛 + 1 产测余量 |
+| max_connection | 4 | 1 控制（手机或 S3 遥控器，C6 单 CTRL 语义二者互斥）+ 2 观赛 + 1 产测余量；S3 遥控器为常驻驾驶 STA（`WIFI_PS_NONE` 关省电） |
 | 模式 | WIFI_MODE_AP | APSTA 为路线 B 预留（未启用） |
 | AP 地址 | 192.168.4.1（静态默认） | IDF 6.x 已移除 `IP_EVENT_AP_GOT_IP`，直接用默认值 |
 

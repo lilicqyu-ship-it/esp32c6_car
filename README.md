@@ -1,6 +1,9 @@
 # c6_car — SmartDrive ESP32-C6 网络协处理器固件
 
 softAP + WebSocket + 配对 + 双板 OTA 中继的 C6 侧固件（proto v2、CRC16、安全性裁决全部在 TC275）。
+控制端两类客户端，协议面完全一致、零区分对待：手机 Web 控制页（`assets_src/`，烧入 assets 分区）
+与 ESP32-S3 LCD 遥控器（平级仓库 [`../smartcar_remote`](../smartcar_remote)，2026-09-29 起，
+proto v2 编解码原样复用本仓 `c6_proto/proto_frames.[ch]`，规格书见其 `doc/`）。
 上游接口基准（在 myCar 仓库）：[21-software-design.md](../myCar/doc/20-design/21-software-design.md)（量产 SDD，设计基准）、[22-link-spi-design.md](../myCar/doc/20-design/22-link-spi-design.md)（板间 SPI/SF 帧）、[41-c6-docs-map.md](../myCar/doc/40-esp32c6/41-c6-docs-map.md)（两仓库文档分工 + 跨仓 TODO T1–T6）。
 **模块详细设计与完成状态：[`doc/`](doc/00-overview.md)**（每模块一份：架构/接口/时序/完成状态表）。
 

@@ -116,3 +116,11 @@ python tools/serial_sniff.py COM14 30
 弹窗关闭瞬间页面全部连接被手机 RST（`recv : 104`）为正常现象。
 **待 TC275 上电后联调**：配对开窗（车侧键 3 s → PAIR_NOTIFY）→ CTRL
 角色 → 摇杆驾驶/遥测端到端（本文档 §4 HIL 项覆盖）。
+
+## 8. 第二控制端联调（S3 遥控器 smartcar_remote，2026-09-29 登记）
+
+🔴 **未开始**。S3 遥控器固件已编译通过（协议自检 CRC check 0x29B1、DRIVE 帧
+回环 OK；见其仓库 README），C6 侧经协议面审计**无需任何代码修改**（hello/tc/
+pong/err、`?token=` 握手、`/api/pair`、DRIVE 0x50@30 Hz 心跳、TELEMETRY 0x41
+全部按 02/06/07 文档既有口径对接）。待两仓同台架联调：配对 → DRIVE/遥测 →
+失联停机 → 手机与 S3 双端控制权切换（单 CTRL 互斥）。
