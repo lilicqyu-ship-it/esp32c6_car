@@ -14,6 +14,9 @@
 #include "esp_partition.h"
 #include "esp_timer.h"
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+
 #include "lwip/sockets.h"
 
 #include "assets_store.h"
@@ -38,9 +41,34 @@ typedef struct
     bool                have_tc;
     char                fw_ver[24];
     uint32_t            tick;                 /* paced broadcast counter */
+    SemaphoreHandle_t   tx_mtx;               /* serialises every WS transmit */
 } http_ctx_t;
 
 static http_ctx_t s_http;
+
+/* httpd_ws_send_frame_async() writes the WS header and the payload with two
+ * separate send() calls and takes no lock.  WS frames leave this box from
+ * several tasks (httpd task: hello/pong/err; bridge broadcaster; pair), so two
+ * frames on one socket could interleave byte-wise - the S3 remote then parses
+ * payload bytes as a header ("Non-zero RSV bits (rsv=0x20)"), drops the link
+ * and the vehicle is stopped by RADIO LOST.  Every transmit goes through here.
+ * The lock wait exceeds the 500 ms SO_SNDTIMEO so a lock timeout can only mean
+ * a genuinely stalled peer, never a false "dead" count on a healthy one. */
+#define WS_TX_LOCK_MS  600u
+
+static esp_err_t ws_tx(int fd, httpd_ws_frame_t *pkt)
+{
+    esp_err_t err;
+
+    if ((s_http.tx_mtx == NULL) ||
+        (xSemaphoreTake(s_http.tx_mtx, pdMS_TO_TICKS(WS_TX_LOCK_MS)) != pdTRUE))
+    {
+        return ESP_ERR_TIMEOUT;
+    }
+    err = httpd_ws_send_frame_async(s_http.hd, fd, pkt);
+    (void)xSemaphoreGive(s_http.tx_mtx);
+    return err;
+}
 
 static int http_send_frame(int fd, const uint8_t *payload, size_t len, bool text);
 uint32_t http_sock_zombies(void);
@@ -344,7 +372,16 @@ static esp_err_t ws_handler(httpd_req_t *req)
             ws_sess_close(fd);
             return ESP_FAIL;
         }
-        return ESP_OK;                            /* ping/pong control frame */
+        if (pkt.type == HTTPD_WS_TYPE_PING)
+        {
+            /* handle_ws_control_frames=true hands PINGs to us and httpd no
+             * longer answers them. The S3 remote's esp_websocket_client pings
+             * every 10 s and drops the link after 120 s without a PONG - the
+             * periodic "RADIO LOST - vehicle stop" every ~2 min. */
+            httpd_ws_frame_t pong = { .type = HTTPD_WS_TYPE_PONG, .final = true };
+            (void)ws_tx(fd, &pong);
+        }
+        return ESP_OK;                            /* pong / other control frame */
     }
     if (pkt.len > (RX_BUF_LEN - 1u))
     {
@@ -362,6 +399,14 @@ static esp_err_t ws_handler(httpd_req_t *req)
 
     switch (pkt.type)
     {
+        case HTTPD_WS_TYPE_PING:
+        {
+            /* RFC 6455 5.5.3: PONG echoes the PING payload */
+            httpd_ws_frame_t pong = { .type = HTTPD_WS_TYPE_PONG, .final = true,
+                                      .payload = pkt.payload, .len = pkt.len };
+            (void)ws_tx(fd, &pong);
+            break;
+        }
         case HTTPD_WS_TYPE_BINARY:
             ws_handle_binary(pkt.payload, pkt.len, fd);
             break;
@@ -403,7 +448,7 @@ esp_err_t ws_send_ctl(int sd, const char *json)
     pkt.payload  = (uint8_t *)json;
     pkt.len      = len;
     pkt.final    = true;
-    return httpd_ws_send_frame_async(s_http.hd, sd, &pkt);
+    return ws_tx(sd, &pkt);
 }
 
 void http_broadcast_ctl(const char *json)
@@ -426,7 +471,7 @@ static int http_send_frame(int fd, const uint8_t *payload, size_t len, bool text
     pkt.payload = (uint8_t *)payload;
     pkt.len     = len;
     pkt.final   = true;
-    esp_err_t err = httpd_ws_send_frame_async(s_http.hd, fd, &pkt);
+    esp_err_t err = ws_tx(fd, &pkt);
     if (err == ESP_OK)
     {
         httpd_sess_update_lru_counter(s_http.hd, fd);
@@ -1049,6 +1094,10 @@ esp_err_t http_start(void)
     cfg.keep_alive_count   = 2;    /* unanswered probes -> peer is gone  */
 
     ws_sessions_init();
+    if (s_http.tx_mtx == NULL)
+    {
+        s_http.tx_mtx = xSemaphoreCreateMutex();
+    }
     (void)assets_store_init();
 
     esp_err_t err = httpd_start(&s_http.hd, &cfg);
