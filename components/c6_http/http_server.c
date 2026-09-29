@@ -43,6 +43,7 @@ typedef struct
 static http_ctx_t s_http;
 
 static int http_send_frame(int fd, const uint8_t *payload, size_t len, bool text);
+uint32_t http_sock_zombies(void);
 
 /* ========================================================================== */
 /* small helpers                                                              */
@@ -504,12 +505,24 @@ static esp_err_t api_health_handler(httpd_req_t *req)
 
 static esp_err_t api_diag_handler(httpd_req_t *req)
 {
-    char json[512];
+    static char json[768];
 
     if (s_http.diag_fn != NULL)
     {
-        s_http.diag_fn(json, sizeof(json));
-        ESP_LOGI(TAG, "GET /api/diag (%u B)", (unsigned)strlen(json));
+        /* diag_fn renders the app object WITH its closing brace; strip it and
+         * append the http-layer view (clients, reaped zombies) before closing
+         * - the app layer must not need an http_server.h dependency */
+        s_http.diag_fn(json, sizeof(json) - 64);
+        size_t len = strlen(json);
+        if ((len > 0u) && (json[len - 1u] == '}'))
+        {
+            json[--len] = '\0';
+        }
+        int n = (int)len;
+        n += (int)snprintf(json + n, sizeof(json) - (size_t)n,
+                           ",\"cli\":%d,\"zs\":%lu}",
+                           ws_client_count(), (unsigned long)http_sock_zombies());
+        ESP_LOGI(TAG, "GET /api/diag (%u B)", (unsigned)n);
         /* text/plain, not application/json: a phone navigating here directly
          * rendered the JSON content type as a blank/eternal-loading tab
          * (09-28); plain text always displays, and the /diag page's
@@ -528,47 +541,110 @@ static esp_err_t api_diag_handler(httpd_req_t *req)
  * of a silent blank - that alone separates "phone left the AP" from "link
  * degraded".  /api/diag stays pure JSON for tooling. */
 static const char DIAG_PAGE[] =
-"<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
-"<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-"<title>C6 诊断</title>"
-"<style>body{font-family:-apple-system,sans-serif;margin:12px;background:#14181f;"
-"color:#e8eaed}h1{font-size:1.05rem;margin:0 0 8px}#age{font-size:.75rem;color:#8ab}"
-"table{border-collapse:collapse;width:100%}td,th{padding:3px 8px;"
-"border-bottom:1px solid #2a3140;text-align:left;font-size:.85rem}"
-"th{color:#9fb3c8;font-weight:500}.ok{color:#7dd087}.bad{color:#e57373}"
-"#raw{white-space:pre-wrap;word-break:break-all;font-size:.7rem;color:#7fbf7f;"
-"margin-top:10px;border-top:1px solid #2a3140;padding-top:6px}</style></head><body>"
-"<h1>C6 诊断 <span id=\"age\"></span></h1><div id=\"v\">加载中…</div><div id=\"raw\"></div>"
-"<script>function p(j,k){return (j&&j[k]!=null)?j[k]:\"-\"}\n"
+"<!DOCTYPE html><html><head><meta charset=\"utf-8\">\n"
+"<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n"
+"<title>C6 诊断</title>\n"
+"<style>\n"
+"body{font-family:-apple-system,sans-serif;margin:12px;background:#14181f;color:#e8eaed}\n"
+"h1{font-size:1.05rem;margin:0 0 8px}\n"
+"#age{font-size:.72rem;color:#9fb3c8;font-weight:400}\n"
+"#age.bad{color:#e57373}\n"
+"h2{font-size:.78rem;color:#9fb3c8;margin:14px 0 2px;font-weight:600;letter-spacing:.06em}\n"
+"table{border-collapse:collapse;width:100%}\n"
+"td,th{padding:4px 8px;border-bottom:1px solid #2a3140;text-align:left;font-size:.85rem;vertical-align:top}\n"
+"th{color:#9fb3c8;font-weight:500;white-space:nowrap;width:32%}\n"
+"td{font-variant-numeric:tabular-nums}\n"
+".ok{color:#7dd087}.bad{color:#e57373}.warn{color:#ffb224}.dim{color:#9fb3c8}\n"
+".big{font-size:1.1rem;font-weight:600}\n"
+".hint{font-size:.7rem;color:#9fb3c8;line-height:1.5;padding:4px 8px}\n"
+"#raw{white-space:pre-wrap;word-break:break-all;font-size:.66rem;color:#7fbf7f;padding:8px 0}\n"
+"summary{font-size:.76rem;color:#9fb3c8;cursor:pointer;margin-top:14px}\n"
+"</style></head><body>\n"
+"<h1>C6 诊断 <span id=\"age\">加载中…</span></h1>\n"
+"<div id=\"v\">加载中…</div>\n"
+"<details><summary>原始数据（JSON）</summary><div id=\"raw\"></div></details>\n"
+"<script>\n"
+"\"use strict\";\n"
+"function p(j,k){return (j&&j[k]!=null)?j[k]:\"-\"}\n"
+"function row(k,v){return \"<tr><th>\"+k+\"</th><td>\"+v+\"</td></tr>\"}\n"
+"function tag(v,c){return '<span class=\"'+c+'\">'+v+'</span>'}\n"
+"function fmtUp(s){s=Math.max(0,+s||0);var d=(s/86400)|0,h=((s%86400)/3600)|0,m=((s%3600)/60)|0;\n"
+" return (d?d+\"天\":\"\")+(d||h?h+\"时\":\"\")+(d||h||m?m+\"分\":\"\")+(s%60)+\"秒\"}\n"
+"var RESETS={0:\"未知\",1:\"上电\",2:\"软件复位\",3:\"程序崩溃\",4:\"中断看门狗\",5:\"任务看门狗\",6:\"RTC看门狗\",7:\"掉电\",8:\"掉电复位\"};\n"
+"function fmtReset(v){return RESETS[+v]||(\"代码 \"+v)}\n"
+"var ok0=function(v){return v==0?\"ok\":\"bad\"};\n"
 "let n=0;\n"
-"async function tick(){try{const c=new AbortController();\n"
-"const t=setTimeout(()=>c.abort(),3000);\n"
+"async function tick(){try{\n"
+"const c=new AbortController();const t=setTimeout(()=>c.abort(),3000);\n"
 "const r=await fetch(\"/api/diag\",{cache:\"no-store\",signal:c.signal});\n"
 "clearTimeout(t);\n"
 "if(!r.ok){throw new Error(\"HTTP \"+r.status)}\n"
 "const j=await r.json();const L=j.link||{};const I=j.imu;\n"
-"let h=\"<table>\";\n"
-"h+=\"<tr><th>固件</th><td>\"+p(j,\"ver\")+\"</td><th>状态</th><td>\"+p(j,\"state\")+\"</td></tr>\";\n"
-"h+=\"<tr><th>槽位</th><td>\"+p(j,\"slot\")+\"</td><th>出厂</th><td>\"+p(j,\"factory\")+\"</td></tr>\";\n"
-"h+=\"<tr><th>运行 s</th><td>\"+p(j,\"uptime_s\")+\"</td><th>堆最小</th><td>\"+p(j,\"heap_min\")+\"</td></tr>\";\n"
-"h+=\"<tr><th>TC275</th><td class=\"+(L.up?\"ok\":\"bad\")+\">\"+(L.up?\"在线\":\"离线\")\n"
-"+\"</td><th>时钟</th><td>\"+p(L,\"clock\")+\"</td></tr>\";\n"
-"h+=\"<tr><th>rtt ms</th><td>\"+p(L,\"rtt\")+\"</td><th>crc/fmt err</th><td>\"+p(L,\"crc_err\")+\" / \"+p(L,\"fmt_err\")+\"</td></tr>\";\n"
-"h+=\"<tr><th>rx/tx</th><td>\"+p(L,\"rx\")+\" / \"+p(L,\"tx\")+\"</td><th>busy</th><td>\"+p(L,\"busy\")+\"</td></tr>\";\n"
-"h+=\"<tr><th>配对</th><td>\"+p(j,\"pair\")+\"</td><th>复位</th><td>\"+p(j,\"reset\")+\"</td></tr>\";\n"
-"if(I){if(I.ok){h+=\"<tr><th>IMU</th><td class=ok>正常</td><th>mg</th><td>\"+(I.mg?I.mg.join(\", \"):\"-\")+\"</td></tr>\";\n"
-"h+=\"<tr><th>幅值</th><td>\"+p(I,\"mag\")+\"</td><th>upd/err</th><td>\"+p(I,\"upd\")+\" / \"+p(I,\"err\")+\"</td></tr>\";}\n"
-"else{h+=\"<tr><th>IMU</th><td class=bad>探测失败</td><th>DEVID</th><td>\"+(I.probe||\"?\")+\" (要求 0xe5)</td></tr>\";\n"
-"h+=\"<tr><th colspan=4>0xff=MISO悬空/SDO未接 · 稳定错误值=时钟或接线错位 · 检查 CS=7 SCL=10 SDA=11 SDO=6 与 3V3/GND</td></tr>\";}}\n"
-"else{h+=\"<tr><th>IMU</th><td colspan=3>null（未启动）</td></tr>\";}\n"
-"h+=\"</table>\";document.getElementById(\"v\").innerHTML=h;\n"
+"let h=\"\";\n"
+"h+=\"<h2>系统</h2><table>\";\n"
+"h+=row(\"固件版本\",p(j,\"ver\"));\n"
+"h+=row(\"运行状态\",tag(p(j,\"state\"),p(j,\"state\")===\"online\"?\"ok\":\"warn\"));\n"
+"h+=row(\"OTA 槽位\",p(j,\"slot\")+(j.factory?' <span class=\"warn\">出厂模式</span>':\"\"));\n"
+"h+=row(\"运行时长\",fmtUp(j.uptime_s));\n"
+"h+=row(\"历史最低内存\",((Math.max(0,+j.heap_min||0))/1024).toFixed(1)+\" KB\");\n"
+"h+=row(\"上次复位原因\",fmtReset(j.reset)+(j.coredump?' <span class=\"bad\">有转储</span>':\"\"));\n"
+"h+=row(\"开机自检\",j.selfcheck?'<span class=\"ok\">通过</span>':'<span class=\"dim\">未记录</span>');\n"
+"h+=\"</table>\";\n"
+"h+=\"<h2>TC275 车辆链路（SPI）</h2><table>\";\n"
+"h+=row(\"链路状态\",L.up?'<span class=\"ok\">在线</span>':'<span class=\"bad\">离线</span>');\n"
+"h+=row(\"时钟\",((Math.max(0,+L.clock||0))/1000000).toFixed(1)+\" MHz\");\n"
+"const rtt=+L.rtt||0;\n"
+"h+=row(\"往返延迟\",tag(rtt+\" ms\",rtt<=10?\"ok\":rtt<=50?\"warn\":\"bad\"));\n"
+"h+=row(\"收帧 / 发帧\",(L.rx||0)+\" / \"+(L.tx||0));\n"
+"h+=row(\"CRC / 格式错误\",tag((L.crc_err||0)+\" / \"+(L.fmt_err||0),ok0((L.crc_err||0)+(L.fmt_err||0))));\n"
+"h+=row(\"发送拥塞\",(L.busy||0)+( (L.busy||0)>0?' <span class=\"warn\">偏高</span>':\"\"));\n"
+"h+=row(\"配对状态\",p(j,\"pair\"));\n"
+"h+=\"</table>\";\n"
+"h+=\"<h2>IMU 三轴加速度（ADXL345）</h2>\";\n"
+"if(I&&I.ok){\n"
+" const mg=I.mg||[0,0,0];\n"
+" const g=function(v){return ((+v)/1000).toFixed(3)};\n"
+" const pitch=Math.atan2(mg[0],mg[2])*180/Math.PI;\n"
+" const roll=Math.atan2(mg[1],mg[2])*180/Math.PI;\n"
+" const snap=function(a){return Math.abs(a)<2?0:a};\n"
+" const P=snap(pitch),R=snap(roll);\n"
+" const parts=[];\n"
+" if(Math.abs(P)>=0.5)parts.push((P>0?\"前倾 \":\"后仰 \")+Math.abs(P).toFixed(1)+\"°\");\n"
+" if(Math.abs(R)>=0.5)parts.push((R>0?\"左倾 \":\"右倾 \")+Math.abs(R).toFixed(1)+\"°\");\n"
+" if(!parts.length)parts.push(\"水平放置\");\n"
+" const mag=+I.mag||0;\n"
+" const magCls=(mag>=950&&mag<=1050)?\"ok\":\"warn\";\n"
+" h+=row(\"三轴读数\",'<span class=\"big\">'+g(mg[0])+\" / \"+g(mg[1])+\" / \"+g(mg[2])+'</span> g');\n"
+" h+=row(\"姿态\",'<span class=\"big\">'+parts.join(\" · \")+\"</span>\");\n"
+" h+=row(\"合幅值\",tag(g(mag)+\" g\",magCls)+(magCls===\"ok\"?\"（≈1 g 静止正常）\":\"（偏离 1 g，正在运动？）\"));\n"
+" h+=row(\"采样\",((I.upd||0))+\" 次\"+((I.err||0)>0?' · <span class=\"bad\">异常 '+I.err+\"</span>\":\"\"));\n"
+"}else if(I&&I.probe){\n"
+" h+=row(\"传感器\",'<span class=\"bad\">未检测到</span>');\n"
+" h+=row(\"总线探测值\",'<span class=\"big\">'+I.probe+\"</span>（要求 0xe5）\");\n"
+" h+='<div class=\"hint\">判读：0xff = MISO 悬空或 SDO 未接 · 稳定的错误值 = 时钟/接线错位 · 数值跳动 = 接触不良。<br>核对接线：CS→GPIO7 · SCL→GPIO10 · SDA→GPIO11 · SDO→GPIO6 · VCC→3V3 · GND</div>';\n"
+"}else{\n"
+" h+=row(\"传感器\",'<span class=\"dim\">未启动（imu:null）</span>');\n"
+"}\n"
+"h+=\"<table>\";\n"
+"h+=row(\"重力方向参考\",\"三轴为板上坐标系；倾角方向依模块安装方向而定\");\n"
+"h+=\"</table>\";\n"
+"h+=\"<h2>Web 服务</h2><table>\";\n"
+"h+=row(\"在线客户端\",(j.cli||0)+\" 个\");\n"
+"h+=row(\"累计回收异常连接\",(j.zs||0)+\" 个\");\n"
+"h+=\"</table>\";\n"
+"document.getElementById(\"v\").innerHTML=h;\n"
 "document.getElementById(\"raw\").textContent=JSON.stringify(j);\n"
-"document.getElementById(\"age\").textContent=\"更新 \"+new Date().toLocaleTimeString();\n"
-"document.getElementById(\"age\").className=\"\";\n"
+"const age=document.getElementById(\"age\");\n"
+"age.className=\"\";\n"
+"age.textContent=\"更新于 \"+new Date().toLocaleTimeString();\n"
 "}catch(e){n++;\n"
-"document.getElementById(\"age\").className=\"bad\";\n"
-"document.getElementById(\"age\").textContent=\"读取失败: \"+e+\" (第\"+n+\"次) - 保留上次数据\"}}\n"
-"tick();setInterval(tick,2000);</script></body></html>\n";
+"const age=document.getElementById(\"age\");\n"
+"age.className=\"bad\";\n"
+"age.textContent=\"读取失败: \"+e+\"（第 \"+n+\" 次）· 保留上次数据 · 2 秒后自动重试\";\n"
+"if(n===1){document.getElementById(\"v\").innerHTML='<div class=\"hint\">无法读取诊断数据。若持续失败，手机可能已不在车的 Wi-Fi 上（设置里确认 Wi-Fi 与是否选择“保持连接”）。</div>'}\n"
+"}}\n"
+"tick();setInterval(tick,2000);\n"
+"</script></body></html>";
 
 static esp_err_t diag_page_handler(httpd_req_t *req)
 {
@@ -733,6 +809,14 @@ static void http_close_cb(httpd_handle_t hd, int sockfd)
  * firmware belongs to the httpd. */
 #define DIAG_FD_MAX 128
 #define DIAG_PEERS_CAP 320
+/* reaped-zombie total, surfaced through /api/diag for the bench UI */
+static uint32_t s_zombies_total;
+
+uint32_t http_sock_zombies(void)
+{
+    return s_zombies_total;
+}
+
 static void http_pool_diag(void *unused)
 {
     (void)unused;
@@ -828,6 +912,7 @@ static void http_pool_diag(void *unused)
     }
     if (zombies != 0)
     {
+        s_zombies_total += (uint32_t)zombies;
         ESP_LOGW(TAG, "SOCK reaped %d zombie fd(s): [%s]", zombies, zlist);
     }
     if (tick_div++ == 0u)

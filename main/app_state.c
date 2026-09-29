@@ -177,26 +177,23 @@ void app_diag_render(char *json, size_t cap)
         ((pair_state() == PAIR_OPEN) ? "open" : "idle"),
         (unsigned)d.uptime_s);
 
-    /* the imu object is appended last (512 B handler buffer has headroom);
-     * stop cleanly instead of appending into a truncated buffer */
-    if ((n < 0) || ((size_t)n >= cap))
+    /* the imu object is appended last; every path below must leave a CLOSED
+     * object - api_diag_handler strips the trailing '}' to append the http
+     * layer's own view, so a missing brace would corrupt its JSON */
+    if ((n >= 0) && ((size_t)n < cap))
     {
-        return;
+        n += (int)snprintf(json + n, (size_t)cap - (size_t)n, ",\"imu\":");
     }
-    n += (int)snprintf(json + n, (size_t)cap - (size_t)n, ",\"imu\":");
-    if ((n < 0) || ((size_t)n >= cap))
+    if ((n >= 0) && ((size_t)n < cap))
     {
-        return;
-    }
-    if (adxl345_diag_json(json + n, (size_t)cap - (size_t)n) < 0)
-    {
-        return;
+        (void)adxl345_diag_json(json + n, (size_t)cap - (size_t)n);
     }
     n = (int)strlen(json);
-    if ((size_t)n < cap)
+    if ((size_t)n >= cap)
     {
-        (void)snprintf(json + n, (size_t)cap - (size_t)n, "}");
+        n = (int)cap - 1;                        /* truncate, still close */
     }
+    (void)snprintf(json + n, (size_t)cap - (size_t)n, "}");
 }
 
 /* ---- transitions ------------------------------------------------------------------ */

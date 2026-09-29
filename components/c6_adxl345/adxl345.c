@@ -349,6 +349,16 @@ esp_err_t adxl345_start(void)
 
 /* ---- poll task ---------------------------------------------------------------- */
 
+/* display EMA (1/16): raw 50 Hz samples flicker the last digit on the diag
+ * page; integer math keeps the poll task float-free */
+static adxl345_data_t s_ema;
+static bool s_ema_seeded;
+
+static int32_t ema16(int32_t avg, int32_t raw)
+{
+    return avg + (raw - avg) / 16;
+}
+
 static void adxl_task(void *arg)
 {
     (void)arg;
@@ -381,6 +391,18 @@ static void adxl_task(void *arg)
         x = raw_to_mg(&raw[0]);
         y = raw_to_mg(&raw[2]);
         z = raw_to_mg(&raw[4]);
+        if (!s_ema_seeded)
+        {
+            s_ema.x_mg = x; s_ema.y_mg = y; s_ema.z_mg = z;
+            s_ema_seeded = true;
+        }
+        else
+        {
+            s_ema.x_mg = ema16(s_ema.x_mg, x);
+            s_ema.y_mg = ema16(s_ema.y_mg, y);
+            s_ema.z_mg = ema16(s_ema.z_mg, z);
+        }
+        x = s_ema.x_mg; y = s_ema.y_mg; z = s_ema.z_mg;
         mag = isqrt64((uint64_t)((int64_t)x * x) +
                       (uint64_t)((int64_t)y * y) +
                       (uint64_t)((int64_t)z * z));
