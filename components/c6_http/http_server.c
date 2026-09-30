@@ -270,6 +270,12 @@ static void ws_tighten_send_timeout(int fd)
      * sender stalls are what backs the command queue up into "busy" replies. */
     const struct timeval tv = { .tv_sec = 0, .tv_usec = 500u * 1000u };
     (void)setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    /* Small control/telemetry frames must leave immediately: with Nagle on,
+     * each frame waits for the ACK of the previous one and the S3 remote's
+     * lwIP delays ACKs - telemetry and pong arrive 100+ ms late.  Browsers
+     * already disable Nagle on their side; this matches it on ours. */
+    const int one = 1;
+    (void)setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
 }
 
 static esp_err_t ws_post_handshake(httpd_req_t *req)
