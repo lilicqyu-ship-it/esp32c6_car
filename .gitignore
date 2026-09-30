@@ -24,6 +24,10 @@ build/
 *.out
 *.exe
 
+# Host-test build products (make -C test/host): bare binaries + macOS dSYM
+/test/host/test_*
+!/test/host/test_*.c
+
 # ESP-IDF specific build outputs
 *.bin
 *.elf
