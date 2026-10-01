@@ -23,7 +23,7 @@
   "clangd.arguments": [
     "--background-index",
     "--query-driver=**",
-    "--compile-commands-dir=c:\\Code\\TC275\\AURIX-v1.10.36-workspace\\esp32c6_car\\build"
+    "--compile-commands-dir=c:\\Code\\smartcar\\esp32c6_car\\build"
   ],
   "idf.currentSetup": "/Users/kunlong/.espressif/v6.1/esp-idf",
   "idf.port": "/dev/tty.usbmodem11401",
