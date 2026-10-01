@@ -7,7 +7,12 @@
 
 ## [未发布]
 
+## [1.0.0] - 2026-10-01
+
+首个稳定版，对齐 `CMakeLists.txt` PROJECT_VER 1.0.0。
+
 ### 新增
+- 按需版本查询：WS `{"t":"tcver"}` → SPI DIAG 0x53/0x24 中继至 TC275（200 ms 限流，配合 S3 About 页 tap 刷新）
 - TC275 版本信标转发：EVT 0x24/0x25 经 DIAG 隧道广播 `{"t":"tcver"}`（配合 tc275_car 版本上链路）
 - ADXL345 三轴加速度计（位拍 SPI），集成进 /diag 诊断页
 - 台架标定页 /calib.html 与 EVT 0x22/0x23 解码；标定流程重排为四步 + jog 故障门禁
@@ -29,6 +34,7 @@
 - 控制命令处理防陈旧帧；DRIVE 队满时丢弃新帧，规避 queue-set 幻影项断言重启
 - 禁用 Nagle 算法，控制/遥测帧即时发送
 - WS CLOSE 帧显式回收会话
+- send_json 状态行补完整状态码（仅传原因短语产生 "HTTP/1.1 OK" 非法行，esp_http_client 拒绝解析，S3 /api/health 超时）
 - .vscode compile-commands-dir 指向当前检出路径
 
 ## [0.1.2] - 2026-09-27
@@ -56,7 +62,8 @@
 - flash.bat / flash.py 一键烧录（full/assets/all 模式）
 - 主机单测套件（G1 门 26/26 绿）与 14 份模块设计文档
 
-[未发布]: https://github.com/lilicqyu-ship-it/esp32c6_car/compare/v0.1.2...HEAD
+[未发布]: https://github.com/lilicqyu-ship-it/esp32c6_car/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/lilicqyu-ship-it/esp32c6_car/compare/v0.1.2...v1.0.0
 [0.1.2]: https://github.com/lilicqyu-ship-it/esp32c6_car/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/lilicqyu-ship-it/esp32c6_car/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/lilicqyu-ship-it/esp32c6_car/releases/tag/v0.1.0
