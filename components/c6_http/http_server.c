@@ -96,7 +96,14 @@ static esp_err_t send_json(httpd_req_t *req, int code, const char *json)
         case 507: msg = "Insufficient Storage"; break;
         default:  msg = "Internal Server Error"; break;
     }
-    httpd_resp_set_status(req, msg);
+    /* httpd_resp_set_status() takes the WHOLE status text ("200 OK", cf.
+     * HTTPD_500).  Passing only the reason phrase produced the status line
+     * "HTTP/1.1 OK": browsers shrug it off, but esp_http_client's http_parser
+     * rejects it, so the S3 remote saw /api/health and /api/pair time out
+     * (status -1).  The buffer only has to outlive httpd_resp_send() below. */
+    char status[40];
+    (void)snprintf(status, sizeof(status), "%d %s", code, msg);
+    httpd_resp_set_status(req, status);
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, json, HTTPD_RESP_USE_STRLEN);
 }
@@ -420,6 +427,11 @@ static esp_err_t ws_handler(httpd_req_t *req)
         case HTTPD_WS_TYPE_TEXT:
         {
             pkt.payload[pkt.len] = '\0';
+            if (strstr((const char *)pkt.payload, "tcver") != NULL)
+            {
+                ESP_LOGI(TAG, "ws text fd=%d len=%u: %s", fd, (unsigned)pkt.len,
+                         (const char *)pkt.payload);
+            }
             if (strncmp((const char *)pkt.payload, "{\"t\":\"ping\"}", 13u) == 0)
             {
                 (void)ws_send_ctl(fd, "{\"t\":\"pong\"}");

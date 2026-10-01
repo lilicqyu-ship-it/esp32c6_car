@@ -205,6 +205,8 @@ void bridge_request_tcver(void)
 
     if (!link_is_up() || ((now - s_last_ms) < (int64_t)TCVER_REQ_MIN_MS))
     {
+        ESP_LOGW(TAG, "tcver request dropped (link_up=%d, since_last=%lld ms)",
+                 link_is_up(), (long long)(now - s_last_ms));
         return;
     }
     s_last_ms = now;
