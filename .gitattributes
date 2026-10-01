@@ -1,0 +1,6 @@
+# 跨平台换行统一（macOS + Windows 共同开发）：仓库内与工作区一律 LF，
+# 保证 contracts 逐字节校验在两边结果一致，且 .sh 在 Git Bash 下不因 \r 报错。
+* text=auto eol=lf
+# Windows 批处理必须 CRLF，否则 cmd.exe 解析标签/跳转会出错
+*.bat text eol=crlf
+*.cmd text eol=crlf
