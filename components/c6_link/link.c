@@ -1,7 +1,7 @@
 /*
  * link.c - SPI half-duplex slave link (spi_slave_hd segment mode)
  *
- * Transaction model (myCar doc 22 §4):
+ * Transaction model (tc275_car doc 22 §4):
  *   - The TC275 master owns the clock; this slave only loads data.
  *   - RX (host -> slave, master CMD3 WRDMA): we keep two 512 B DMA buffers
  *     queued; SF_RX_ROOM advertises the queued capacity.  Completed segments
@@ -122,7 +122,7 @@ typedef struct
     uint32_t seq_rej_run;                            /* consecutive rejects */
     bool     seq_synced;                             /* false until the first
                                                        master frame locks the
-                                                       window (myCar's parser
+                                                       window (tc275_car's parser
                                                        has the same guard:
                                                        haveLastSeq)         */
     bool     up_reported;
@@ -231,11 +231,11 @@ static size_t v2_to_sf(const proto_frame_t *vf, sf_frame_t *sf)
         }
 #if CONFIG_C6_BENCH_CTRL
         /* bench: the TC275 build refuses op 0x50 (kinematics not landed yet;
-         * myCar link_dispatch counts cmdUnsupportedOp and drops it). Translate
+         * tc275_car link_dispatch counts cmdUnsupportedOp and drops it). Translate
          * to SET_SPEED {left,right} percent - the one drive op CPU0 already
          * executes. Arcade mix: 600 mm/s ~= 100 %, 300 deg/s ~= 100 % diff,
          * omega > 0 = CCW (left turn) => right wheel faster. The same formula
-         * is the one planned for myCar link_dispatch when 0x50 lands there. */
+         * is the one planned for tc275_car link_dispatch when 0x50 lands there. */
         if (vf->cmd == PROTO_CMD_DRIVE)
         {
             int32_t lPct, rPct;
@@ -797,7 +797,7 @@ static void link_task(void *arg)
                     (uint16_t)((L->last_host_ev1 - L->last_host_ev2) & 0xFFFFu);
             }
 
-            /* Bench bring-up diagnostic (myCar LINKDBG counterpart): the single
+            /* Bench bring-up diagnostic (tc275_car LINKDBG counterpart): the single
              * most useful fact is whether the master's SPI transactions reach
              * this slave at all. host_ev counts every CS-driven callback
              * (RDBUF/WRBUF/RDDMA/WRDMA); if it stays 0 the wire from the master

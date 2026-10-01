@@ -3,7 +3,7 @@
 | 项 | 内容 |
 |---|---|
 | 代码位置 | `components/c6_link/link.c`、`include/link.h`、`Kconfig`；SF 帧编解码见 `components/c6_sf/` 与 [14-sf-link.md](14-sf-link.md) |
-| 上游需求 | myCar `doc/20-design/22-link-spi-design.md`（V1.0 选定方案）、SDD V1.2 §3.7/§6.1a、FR-3/FR-5 |
+| 上游需求 | tc275_car `doc/20-design/22-link-spi-design.md`（V1.0 选定方案）、SDD V1.2 §3.7/§6.1a、FR-3/FR-5 |
 | 状态 | 🟩 **代码完成，G1/G2 通过** — 波形兼容（22 §8 G1）与时延/安全门禁（G3–G6）待台架 |
 
 > **V1.0 变更**：物理层已由 UART@2M 换向 SPI 半双工从机（22 号方案，T1 落地）。
@@ -28,7 +28,7 @@ ERRSTAT/CMDRSP）、IRQ 数据就绪线驱动、SF 帧↔v2 帧字段映射、�
 线程安全：`link_send/link_send_ota_chunk` 互斥（10 ms 超时）+ 队列背压（满 = BUSY，
 命令类不静默丢——LLDD 满策略保留）；bridge/pair 仍只调 `link_send()`。
 
-## 3. 硬件配置（真源：myCar 23-wiring §9.1）
+## 3. 硬件配置（真源：tc275_car 23-wiring §9.1）
 
 | 信号 | TC275 | C6 GPIO | 说明 |
 |---|---|---|---|

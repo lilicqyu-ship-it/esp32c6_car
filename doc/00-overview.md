@@ -4,8 +4,8 @@
 |---|---|
 | 文档版本 | V1.0 |
 | 日期 | 2026-09-26 |
-| 上游 | [21-software-design.md](../../myCar/doc/20-design/21-software-design.md)（量产 SDD，**设计基准**）→ [22-link-spi-design.md](../../myCar/doc/20-design/22-link-spi-design.md)（板间 SPI/SF 帧详细设计）→ [41-c6-docs-map.md](../../myCar/doc/40-esp32c6/41-c6-docs-map.md)（两仓库文档分工与跨仓 TODO）→ 本目录（各模块详细设计 + 完成状态） |
-| 代码基线 | `c6_car` 工作区（`idf.py build` 通过，`build/c6_car.bin` ≈ 1.05 MB） |
+| 上游 | [21-software-design.md](../../tc275_car/doc/20-design/21-software-design.md)（量产 SDD，**设计基准**）→ [22-link-spi-design.md](../../tc275_car/doc/20-design/22-link-spi-design.md)（板间 SPI/SF 帧详细设计）→ [41-c6-docs-map.md](../../tc275_car/doc/40-esp32c6/41-c6-docs-map.md)（两仓库文档分工与跨仓 TODO）→ 本目录（各模块详细设计 + 完成状态） |
+| 代码基线 | `esp32c6_car` 工作区（`idf.py build` 通过，`build/esp32c6_car.bin` ≈ 1.05 MB） |
 | 控制端 | 手机 Web 控制页（`assets_src/`，烧入 assets 分区）＋ ESP32-S3 LCD 遥控器（平级仓库 `../smartcar_remote`，2026-09-29 起：proto v2 编解码原样复用本仓 c6_proto，协议面零改动对接，**双端联调待做**） |
 
 ## 状态图例
@@ -25,7 +25,7 @@
 | [01](01-app-state.md) | 应用状态机与启动编排 | `main/app_main.c` `main/app_state.c` | LLDD §4.1/§4.10 | 🟡 90% | 🟩 编译通过；link_task TWDT 已补 |
 | [02](02-proto.md) | proto v2 编解码（手机/WS 侧，S3 遥控器同源复用） | `components/c6_proto/` | SDD V1.2 §6.1b / LLDD §3.1 | ✅ 100% | ✅ 主机单测 12 项 + 10⁷ 模糊 |
 | [03](03-factory.md) | 出厂数据（NVS） | `components/c6_factory/` | LLDD §4.8 | 🟡 90% | 🟩 编译通过；写入入口（DPT）未接 |
-| [04](04-link.md) | LINK 链路（**SPI 从机**） | `components/c6_link/` `components/c6_sf/` | myCar doc 22 / SDD V1.2 §6.1a / FR-3 | 🟩 代码完成 | 🟩 G1/G2 通过；波形兼容与台架门禁待测 |
+| [04](04-link.md) | LINK 链路（**SPI 从机**） | `components/c6_link/` `components/c6_sf/` | tc275_car doc 22 / SDD V1.2 §6.1a / FR-3 | 🟩 代码完成 | 🟩 G1/G2 通过；波形兼容与台架门禁待测 |
 | [05](05-net.md) | 接入网 | `components/c6_net/` | LLDD §4.2 / FR-1 | 🟡 95% | 🟩 编译通过；Portal 弹窗真机验证（09-26）；mDNS 解析待手机实测 |
 | [06](06-pair.md) | 配对与会话 | `components/c6_pair/` | LLDD §4.4 / FR-4 | 🟩 100% | 🟩 编译通过，流程未联调 |
 | [07](07-http.md) | Web 服务 | `components/c6_http/` | LLDD §4.3 / §3.2 / FR-2 | 🟡 92% | 🟩 编译通过；HELLO/abort 缺陷已修待回归 |
@@ -35,7 +35,7 @@
 | [11](11-legacy.md) | TCP 8080 直通桥 | `components/c6_legacy/` | LLDD FR-10 | 🟡 代码完成 | 🔴 未编译（默认关）、未测试 |
 | [12](12-assets-tools.md) | 控制页与工具链 | `assets_src/` `tools/` | SDD §11 / LLDD §4.7 | 🟡 95% | ✅ 工具实测；assets 分区+Portal+WS 观察态真机验证（09-26）；配对/驾驶待 TC275 |
 | [13](13-verification.md) | 验证与测试汇总 | `test/host/` | LLDD §9 + doc 22 §8 | 🟡 G1 绿 / G2 绿 | G3 走查完毕；G4 HIL 未开始 |
-| [14](14-sf-link.md) | **SF 链路详设（SPI 落地）** | `components/c6_sf/` `components/c6_link/` | myCar doc 22 §4–§5 | 🟩 代码完成 | ✅ test_sf 7 项；波形兼容待台架 |
+| [14](14-sf-link.md) | **SF 链路详设（SPI 落地）** | `components/c6_sf/` `components/c6_link/` | tc275_car doc 22 §4–§5 | 🟩 代码完成 | ✅ test_sf 7 项；波形兼容待台架 |
 | [15](15-led.md) | WS2812 状态指示灯 | `components/c6_led/` | bring-up 运维需求 | 🟩 代码完成 | 🟩 真机验证（绿心跳=正常） |
 | [18](18-adxl345.md) | ADXL345 三轴加速度计（位拍 SPI，本地 /diag） | `components/c6_adxl345/` | bring-up 运维需求 | 🟩 代码完成 | 🟩 IDF v6.1 编译+真机启动/缺席降级验证；接线读数待台架 |
 

@@ -54,4 +54,4 @@ esp_err_t legacy_tcp_start(void);   /* app_main 在 CONFIG_C6_LEGACY_TCP=y 时�
 | G-4 | v1 demo 客户端兼容翻译 | 🔴 | Q4 未定稿，本版不做 |
 | G-5 | 鉴权/限流 | ⚪ | 过渡桥无鉴权（LLDD 定位）；量产首批后建议关闭 |
 
-**启用方式**：`idf.py menuconfig` → c6_car project → `C6_LEGACY_TCP=y` 后重编译。
+**启用方式**：`idf.py menuconfig` → esp32c6_car project → `C6_LEGACY_TCP=y` 后重编译。

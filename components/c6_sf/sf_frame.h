@@ -1,7 +1,7 @@
 /*
  * sf_frame.h - SPI-Link SF frame codec (pure C, host-testable)
  *
- * Implements the SF frame defined in myCar doc/20-design/22-link-spi-design.md
+ * Implements the SF frame defined in tc275_car doc/20-design/22-link-spi-design.md
  * §5 (SDD V1.2 §6.1a).  The SF frame lives ONLY on the SPI link between the
  * C6 (slave, spi_slave_hd) and the TC275 (QSPI3 master); the phone/WS side
  * keeps proto v2 frames - c6_link performs the v2<->SF field mapping

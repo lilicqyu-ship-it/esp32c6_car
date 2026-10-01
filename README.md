@@ -1,10 +1,10 @@
-# c6_car — SmartDrive ESP32-C6 网络协处理器固件
+# esp32c6_car — SmartDrive ESP32-C6 网络协处理器固件
 
 softAP + WebSocket + 配对 + 双板 OTA 中继的 C6 侧固件（proto v2、CRC16、安全性裁决全部在 TC275）。
 控制端两类客户端，协议面完全一致、零区分对待：手机 Web 控制页（`assets_src/`，烧入 assets 分区）
 与 ESP32-S3 LCD 遥控器（平级仓库 [`../smartcar_remote`](../smartcar_remote)，2026-09-29 起，
 proto v2 编解码原样复用本仓 `c6_proto/proto_frames.[ch]`，规格书见其 `doc/`）。
-上游接口基准（在 myCar 仓库）：[21-software-design.md](../myCar/doc/20-design/21-software-design.md)（量产 SDD，设计基准）、[22-link-spi-design.md](../myCar/doc/20-design/22-link-spi-design.md)（板间 SPI/SF 帧）、[41-c6-docs-map.md](../myCar/doc/40-esp32c6/41-c6-docs-map.md)（两仓库文档分工 + 跨仓 TODO T1–T6）。
+上游接口基准（在 tc275_car 仓库）：[21-software-design.md](../tc275_car/doc/20-design/21-software-design.md)（量产 SDD，设计基准）、[22-link-spi-design.md](../tc275_car/doc/20-design/22-link-spi-design.md)（板间 SPI/SF 帧）、[41-c6-docs-map.md](../tc275_car/doc/40-esp32c6/41-c6-docs-map.md)（两仓库文档分工 + 跨仓 TODO T1–T6）。
 **模块详细设计与完成状态：[`doc/`](doc/00-overview.md)**（每模块一份：架构/接口/时序/完成状态表）。
 
 ## 目录
@@ -16,7 +16,7 @@ components/
   c6_factory/    NVS 出厂数据（SN/密码/通道/预配对表/会话宽限）
   c6_link/       LINK 传输层：SPI 从机(spi_slave_hd 段模式) + 共享寄存器握手
                  + IRQ 数据就绪线 + 健康监测；v2↔SF 帧映射内置于 link
-  c6_sf/         SF 帧编解码（SPI 链路专用容器，纯 C 主机可测，myCar doc 22 §5）
+  c6_sf/         SF 帧编解码（SPI 链路专用容器，纯 C 主机可测，tc275_car doc 22 §5）
   c6_net/        softAP + Captive DNS(UDP53) + mdns_lite + Wi-Fi 事件
   c6_http/       httpd + WS 会话表 + assets 分区流式服务 + REST/OTA 端点
   c6_pair/       配对窗口跟随 + 会话 token（SHA-256 截断存储）+ 30s 宽限
@@ -51,9 +51,9 @@ idf.py -p PORT flash monitor
 | `bootloader/bootloader.bin` | 二级引导 | `0x0` |
 | `partition_table/partition-table.bin` | 分区表 | `0x8000` |
 | `ota_data_initial.bin` | OTA 槽位标记初始值（指向 ota_0） | `0x19000` |
-| `c6_car.bin` | **应用固件**（烧入 ota_0/ota_1 槽） | `0x20000`（ota_0） |
+| `esp32c6_car.bin` | **应用固件**（烧入 ota_0/ota_1 槽） | `0x20000`（ota_0） |
 | `assets.bin` | 控制页打包件（`tools/build_assets.py` 生成） | assets 分区 `0x620000` |
-| `c6_car.elf` / `c6_car.map` | 调试符号/链接映射（panic 解栈、addr2line 用），**不烧录** | — |
+| `esp32c6_car.elf` / `esp32c6_car.map` | 调试符号/链接映射（panic 解栈、addr2line 用），**不烧录** | — |
 | `*_flashed.bin` | 增量烧录差分缓存（esptool `--diff-with`），**勿手动烧** | — |
 
 分区布局（真源 `partitions.csv`，LLDD 2.1）：`ota_0`/`ota_1` 各 3 MB 双槽
@@ -128,7 +128,7 @@ parttool.py -p PORT write_partition --partition-name=assets --input build/assets
 `tools/keys/ed25519_dev.seed`，仅台架用）。**量产前必须换产线密钥对**：
 
 ```bash
-python tools/sign_bundle.py --c6 build/c6_car.bin --out build/c6fw.bundle
+python tools/sign_bundle.py --c6 build/esp32c6_car.bin --out build/c6fw.bundle
 curl -F file=@build/c6fw.bundle "http://192.168.4.1/ota/c6?token=<控制端token>"
 ```
 
@@ -153,5 +153,5 @@ ed25519 RFC 8032 正/反向量 + dev 密钥端到端；bundle 签名/哈希/越�
 - `0x63` = OTA_STATUS（`state==DONE` 即 END），`0x64` SWAP、`0x65` ABORT；
   UART 时代的 0x43 PING / 0x44 BAUD 已删除（doc 22 T2）
 - 会话 token 32B 随机，仅存 SHA-256 前 16B 哈希（内存 + NVS 30s 宽限）
-- LINK 接线（真源 myCar 23-wiring §9.1）：SCLK=19 / MOSI=18 / MISO=20 /
+- LINK 接线（真源 tc275_car 23-wiring §9.1）：SCLK=19 / MOSI=18 / MISO=20 /
   CS=23 / IRQ=21（开漏，10k 上拉为外部件）；量产时钟 5 MHz（22 §8 G5）

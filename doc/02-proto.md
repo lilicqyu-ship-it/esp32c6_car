@@ -7,7 +7,7 @@
 | 状态 | ✅ **100%** — 主机单测 12 项全绿（含 10⁷ 随机帧模糊） |
 
 > **V1.0 口径更新（2026-09-26）**：v2 帧现在**只用于手机/WS 一侧**；板间 LINK
-> 已换向 SPI 并改用 SF 帧（SDD V1.2 §6.1a / myCar doc 22），v2↔SF 字段映射在
+> 已换向 SPI 并改用 SF 帧（SDD V1.2 §6.1a / tc275_car doc 22），v2↔SF 字段映射在
 > c6_link 内完成（见 [14-sf-link.md](14-sf-link.md) §5）。0x43 PING / 0x44 BAUD
 > 为 UART 时代产物，常量已从本组件删除（22 号 T2）。
 >
@@ -120,5 +120,5 @@ int      proto_telemetry_decode(const uint8_t *d, size_t len, proto_telemetry_t 
 | P-1 | 帧编码/解析/CRC | ✅ | 全部单测覆盖 |
 | P-2 | 遥测 LE 编解码 | ✅ | |
 | P-3 | 命令常量全集（含 0x70–0x79 DPT） | ✅ | |
-| P-4 | TC275 侧采用同一文件 | 🔴 | myCar 仍为 v1（C1 决策：直拷接入，另立任务） |
+| P-4 | TC275 侧采用同一文件 | 🔴 | tc275_car 仍为 v1（C1 决策：直拷接入，另立任务） |
 | P-5 | 握手帧 `{protoVer, fwVer, boardId, capabilities}` 交换 | 🟡 | SDD §6.1 提及；当前 VER 字节即版本协商载体，完整握手帧未实现（波特率握手 0x44 已覆盖链路层协商） |

@@ -1,5 +1,5 @@
 /*
- * test_sf.c - SF frame codec tests (myCar doc 22 §5, G2 gate):
+ * test_sf.c - SF frame codec tests (tc275_car doc 22 §5, G2 gate):
  * round trip, padding/multi-frame segments, parser error branches,
  * SEQ window, 10^7 random-byte fuzz, and v2<->SF mapping round trips
  * for the representative commands (mirror of link.c's tables).

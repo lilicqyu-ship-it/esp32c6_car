@@ -56,7 +56,7 @@ extern "C" {
 #define PROTO_CMD_EMERGENCY_STOP    0x32u
 
 /* v2 transport frames (phone/WS side; the SPI LINK uses SF frames instead -
- * 0x43 PING / 0x44 BAUD were UART-era and are deleted per myCar doc 22 T2) */
+ * 0x43 PING / 0x44 BAUD were UART-era and are deleted per tc275_car doc 22 T2) */
 #define PROTO_CMD_TELEMETRY         0x41u  /* TC275 -> C6, 20 ms             */
 #define PROTO_CMD_LINK_STATE        0x42u  /* C6 -> TC275, client set change */
 
@@ -75,9 +75,9 @@ extern "C" {
 #define PROTO_CMD_OTA_ABORT         0x65u  /* drop half-written slot          */
 
 /* production test group */
-/* Production test group - bench calibration family (doc/17 §8.4, myCar doc/34 §9).
+/* Production test group - bench calibration family (doc/17 §8.4, tc275_car doc/34 §9).
  * Byte 0x70 keeps its historical name here and means CAL DIR on the TC275 side:
- * PROTO_CMD_DPT_ENTER (c6_car) == PROTO_CMD_DPT_CAL_DIR (myCar protocol.h) -
+ * PROTO_CMD_DPT_ENTER (esp32c6_car) == PROTO_CMD_DPT_CAL_DIR (tc275_car protocol.h) -
  * same byte, two names, actual semantics = encoder direction calibration.
  * 0x75..0x79 are NOT implemented on TC275 (they fall into the slave default
  * branch); the /calib.html page must never send them. */

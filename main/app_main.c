@@ -196,7 +196,7 @@ void app_main(void)
     (void)legacy_tcp_start();
 #endif
 
-    ESP_LOGI(TAG, "c6_car up: ssid=%s state=%s", ssid, app_state_name());
+    ESP_LOGI(TAG, "esp32c6_car up: ssid=%s state=%s", ssid, app_state_name());
 
     /* app_main task idles; all work lives in the component tasks */
     for (;;)

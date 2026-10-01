@@ -1,4 +1,4 @@
-menu "c6_car project"
+menu "esp32c6_car project"
 
     config C6_FACTORY_DEV_OVERRIDE
         bool "BENCH ONLY: synthesize factory data when NVS is empty"
@@ -33,7 +33,7 @@ menu "c6_car project"
         default n
         help
             Bench bring-up shortcut while the TC275 build still refuses 0x50
-            DRIVE and the PAIR channel (myCar link_dispatch whitelist).  With
+            DRIVE and the PAIR channel (tc275_car link_dispatch whitelist).  With
             this on:  every WS session is promoted to CTRL without a token;
             v2 DRIVE (0x50 v,omega) is translated on the C6 into SET_SPEED
             (0x10 left,right percent), the one op CPU0 already executes; and

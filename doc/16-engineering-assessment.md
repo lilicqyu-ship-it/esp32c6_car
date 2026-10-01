@@ -1,12 +1,12 @@
-# c6_car 固件工程技术评估报告
+# esp32c6_car 固件工程技术评估报告
 
 | 项 | 内容 |
 |---|---|
 | 文档版本 | V1.0 |
 | 日期 | 2026-09-27 |
-| 评估对象 | SmartDrive ESP32-C6 网络协处理器固件（`c6_car` 工作区） |
+| 评估对象 | SmartDrive ESP32-C6 网络协处理器固件（`esp32c6_car` 工作区） |
 | 评估方式 | 源码通读（启动/状态机、LINK/SF、proto、bridge、OTA/ed25519、pair、http/ws、net）+ 文档核对 + 主流技术基线比对 |
-| 代码基线 | ESP-IDF v6.1-beta1，`idf.py build` 通过，`c6_car.bin` ≈ 1.05 MB，8 MB flash |
+| 代码基线 | ESP-IDF v6.1-beta1，`idf.py build` 通过，`esp32c6_car.bin` ≈ 1.05 MB，8 MB flash |
 | 上游基准 | [00-overview.md](00-overview.md)（模块完成状态矩阵） |
 | 结论摘要 | 架构与工程质量属**生产级水准**；核心风险集中在"未经 HIL/目标机实测"的验证缺口，以及量产密钥/安全启动的收尾环节 |
 

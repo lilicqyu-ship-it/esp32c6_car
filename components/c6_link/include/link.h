@@ -1,5 +1,5 @@
 /*
- * link.h - SPI half-duplex frame link to TC275 (myCar doc 22, SDD §3.7/§6.1a)
+ * link.h - SPI half-duplex frame link to TC275 (tc275_car doc 22, SDD §3.7/§6.1a)
  *
  * Transport: TC275 QSPI3 master <-> ESP32-C6 SPI2 slave (spi_slave_hd, segment
  * mode), 5 wires SCLK/MOSI/MISO/CS + open-drain IRQ (data-ready).  Frames on

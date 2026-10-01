@@ -16,8 +16,8 @@ size gate in addition to the compile gate.
 
 Usage:
   python tools/ci_size_report.py \
-      --map build/c6_car.map \
-      --bin build/c6_car.bin \
+      --map build/esp32c6_car.map \
+      --bin build/esp32c6_car.bin \
       --partitions partitions.csv \
       --extra-bin assets=build/assets.bin
 """

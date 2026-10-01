@@ -5,11 +5,11 @@
 | 文档编号 | 17 |
 | 域 | C6 侧（含与 TC275 的跨仓库协议契约） |
 | 状态 | V1.2（2026-09-27，页面按标定流程重排为四步 + 常驻安全条，见 §9；V1.1 = 追加 §8：逐电机手动控制 · 车辆可视化 · 参数卡片与 TC275 DFlash 持久化 · DPT 命令族 0x71~0x74；V1.0 = 首版判向标定页） |
-| 开发者 | AI（本仓库 c6_car 作业；M2 涉及 myCar 侧另立任务） |
-| 背景 | myCar F02 闭环伺服（commit 73058cd）落地后，UI 驾驶"只能轻微扭动"。TC275 串口 SRV=/SPD= 台架数据判定：右半桥编码器方向约定反了，右侧闭环成正反馈。TC275 已有 0x70 自动判向（F02 落地），但**无任何用户入口触发、结果只打串口**。 |
-| 关联文档 | 本仓库 02-proto / 08-bridge / 14-sf-link / 12-assets-tools；myCar doc/30-tc275/21（§5.2、§15.3）、22（§5.1/§5.4）、23（§8.4）、33（AI 指南） |
+| 开发者 | AI（本仓库 esp32c6_car 作业；M2 涉及 tc275_car 侧另立任务） |
+| 背景 | tc275_car F02 闭环伺服（commit 73058cd）落地后，UI 驾驶"只能轻微扭动"。TC275 串口 SRV=/SPD= 台架数据判定：右半桥编码器方向约定反了，右侧闭环成正反馈。TC275 已有 0x70 自动判向（F02 落地），但**无任何用户入口触发、结果只打串口**。 |
+| 关联文档 | 本仓库 02-proto / 08-bridge / 14-sf-link / 12-assets-tools；tc275_car doc/30-tc275/21（§5.2、§15.3）、22（§5.1/§5.4）、23（§8.4）、33（AI 指南） |
 
-> **设计原则：简单、功能完整。** M1 只动 C6，复用既有通路零协议改动即可交付可用台架工具；M2 补一条结果回传帧让结果直接显示在页面上（需要 myCar 固件配合，契约在 §5 定义死）。
+> **设计原则：简单、功能完整。** M1 只动 C6，复用既有通路零协议改动即可交付可用台架工具；M2 补一条结果回传帧让结果直接显示在页面上（需要 tc275_car 固件配合，契约在 §5 定义死）。
 
 ---
 
@@ -24,7 +24,7 @@ SRV= 0 0 37 0 43 -334          ← 摇杆松开（目标0/0）后右 duty 仍钳
 SPD= 0 43 29926 1              ← "空闲"状态下右轮累计转出 29.9 m
 ```
 
-机制：镜像减速箱电机（B/C 反向装）+ `g_encInvert` 默认全 +1（myCar `rt/encoder.c:62`）+ 0x70 判向从未跑过 → 右侧（E3+E4）聚合符号反 → 右侧伺服正反馈。
+机制：镜像减速箱电机（B/C 反向装）+ `g_encInvert` 默认全 +1（tc275_car `rt/encoder.c:62`）+ 0x70 判向从未跑过 → 右侧（E3+E4）聚合符号反 → 右侧伺服正反馈。
 
 **目标**：做一个专门的标定 Web UI 页面 `/calib.html`，完成：
 
@@ -35,8 +35,8 @@ SPD= 0 43 29926 1              ← "空闲"状态下右轮累计转出 29.9 m
 
 **非目标（明确排除）**：
 
-- ~~判向结果的掉电持久化~~ → **V1.1 起纳入**：标定数据（电机位置/运动方向/算法参数）存 TC275 DFlash，见 §8.3 与 myCar 34 号 §8（§7.3 的 bake-in 降级为应急路径）；
-- 速度标定（myCar §15.3 的 `ENCODER_FULL_SCALE_MM_S` 整定）；
+- ~~判向结果的掉电持久化~~ → **V1.1 起纳入**：标定数据（电机位置/运动方向/算法参数）存 TC275 DFlash，见 §8.3 与 tc275_car 34 号 §8（§7.3 的 bake-in 降级为应急路径）；
+- 速度标定（tc275_car §15.3 的 `ENCODER_FULL_SCALE_MM_S` 整定）；
 - DPT 0x71~0x79 其它产测命令（TC275 侧未实现，页面**只准发 0x70**）。
 
 ---
@@ -98,7 +98,7 @@ idle → confirm(二次确认弹窗) → sending(发1帧) → running(1.4s+余�
 
 发出 0x70 后 3s 内未收到结果事件 → 结果区显示固定文案：
 
-> 结果回传未启用（需 myCar 固件 M2）：请在 TC275 调试串口查看 `ENCCAL=` 行（invert[0..3] delta[0..3]）。
+> 结果回传未启用（需 tc275_car 固件 M2）：请在 TC275 调试串口查看 `ENCCAL=` 行（invert[0..3] delta[0..3]）。
 
 页面不报错、不复位，进度照常结束。
 
@@ -114,14 +114,14 @@ idle → confirm(二次确认弹窗) → sending(发1帧) → running(1.4s+余�
 | 2 | `c6_bridge/bridge.c:153` | `bridge_post_cmd` 入队；0x70 非 DRIVE，走严格不丢路径 |
 | 3 | `c6_link/link.c:286` | v2 cmd 0x70∈[`PROTO_CMD_DPT_ENTER`,`PROTO_CMD_DPT_SELFTEST`] → SF `TYPE_CMD(0x01)`、`CID_DPT(0x04)`、`payload[0]=op=0x70`、len=1 |
 | 4 | SF-over-QSPI3 | 事务泵照旧（doc/14-sf-link.md；寄存器握手 + RDDMA/WRDMA 分段） |
-| 5 | myCar `com/link.c:243` | CPU2 `link_dispatch`：CID 白名单含 DPT → `link_forward(0x70,…)` 入 xcore 命令队列 |
-| 6 | myCar `mw/proto/protocol.c:110` | CPU0 `PROTO_handleCommand` case 0x70 → `XCORE_dirCalibRequest()`。**注意：不是驾驶命令——不发心跳、不受故障锁存门禁** |
-| 7 | myCar `rt/motor_algo.c` | CPU1 消费请求 → `calibStart`（`MOTOR_stopAll`+`SERVO_reset`）→ 逐轮 250ms +12% duty 脉冲 + 80ms 停顿，共 ≈1.4s → delta<0 翻 `ENCODER_setInvert(-1)`，delta==0 记死通道 → 结束 `ENCCAL= invert[0..3] delta[0..3]`（仅串口） |
+| 5 | tc275_car `com/link.c:243` | CPU2 `link_dispatch`：CID 白名单含 DPT → `link_forward(0x70,…)` 入 xcore 命令队列 |
+| 6 | tc275_car `mw/proto/protocol.c:110` | CPU0 `PROTO_handleCommand` case 0x70 → `XCORE_dirCalibRequest()`。**注意：不是驾驶命令——不发心跳、不受故障锁存门禁** |
+| 7 | tc275_car `rt/motor_algo.c` | CPU1 消费请求 → `calibStart`（`MOTOR_stopAll`+`SERVO_reset`）→ 逐轮 250ms +12% duty 脉冲 + 80ms 停顿，共 ≈1.4s → delta<0 翻 `ENCODER_setInvert(-1)`，delta==0 记死通道 → 结束 `ENCCAL= invert[0..3] delta[0..3]`（仅串口） |
 | 8 | 任意急停 | 0x32 或链路失联 → `ENCCAL aborted (estop)`，标定中止 |
 
-**命名冲突（必须在代码注释里写明）**：字节 0x70 在 c6_car 叫 `PROTO_CMD_DPT_ENTER`（`c6_proto/proto_frames.h:78`），在 myCar 叫 `PROTO_CMD_DPT_CAL_DIR`（`mw/proto/protocol.h:36`）——同一字节双语义，对 myCar main 基线的实际语义是**编码器判向标定**。
+**命名冲突（必须在代码注释里写明）**：字节 0x70 在 esp32c6_car 叫 `PROTO_CMD_DPT_ENTER`（`c6_proto/proto_frames.h:78`），在 tc275_car 叫 `PROTO_CMD_DPT_CAL_DIR`（`mw/proto/protocol.h:36`）——同一字节双语义，对 tc275_car main 基线的实际语义是**编码器判向标定**。
 
-> **V1.1 订正**：本节 V1.0 原文"其余 0x71~0x79 在 TC275 侧落入 default 被忽略"已随 §8.4 失效——`0x71~0x74` 现为 MOTOR_JOG / REC_GET / REC_SET / REC_CLEAR（myCar 34 §9 同源，两端名字已对齐）；`0x75~0x79` 仍未实现、页面禁发。`proto_frames.h` 里 0x71~0x74 的旧名（`DPT_LED`/`DPT_MOTOR_RUN`/`DPT_ENC_READ`/`DPT_CAL`，来自 LLDD 3.1 的早期规划）从未被任何代码引用，已按本契约改名。
+> **V1.1 订正**：本节 V1.0 原文"其余 0x71~0x79 在 TC275 侧落入 default 被忽略"已随 §8.4 失效——`0x71~0x74` 现为 MOTOR_JOG / REC_GET / REC_SET / REC_CLEAR（tc275_car 34 §9 同源，两端名字已对齐）；`0x75~0x79` 仍未实现、页面禁发。`proto_frames.h` 里 0x71~0x74 的旧名（`DPT_LED`/`DPT_MOTOR_RUN`/`DPT_ENC_READ`/`DPT_CAL`，来自 LLDD 3.1 的早期规划）从未被任何代码引用，已按本契约改名。
 
 ---
 
@@ -129,7 +129,7 @@ idle → confirm(二次确认弹窗) → sending(发1帧) → running(1.4s+余�
 
 现状缺口：标定结果只有 TC275 串口 `ENCCAL=` 行，页面拿不到。M2 定义如下：
 
-### 4.1 SF 帧定义（myCar 侧）
+### 4.1 SF 帧定义（tc275_car 侧）
 
 | 字段 | 值 |
 |---|---|
@@ -139,10 +139,10 @@ idle → confirm(二次确认弹窗) → sending(发1帧) → running(1.4s+余�
 | status | 0=完成 1=急停中止 2=忙（已有标定在跑） |
 | 方向 | 仅 TC275 → C6，每次标定结束发一帧 |
 
-> **V1.1 长度更正**：本文档 V1.0 曾把 payload 标为 26 B、追加 `saved` 后 27 B——那是算术错误（`i32×4` 是 16 B 不是 20 B）。**字段偏移从未变过，线上布局以本表为准**；myCar 34 §3.1/§9.1.1/§9.4 与 doc/22 已同步改订。TC275 侧首版按 27 B 实施时踩到同一坑（`payload[22..25]` 未赋值随帧发出、C6 读到脏 `saved`），现已改为 23 B / `saved@[22]` 并在其主机单测加了长度不变式。C6 解码本就按字段偏移 + 长度下限（n≥22，n≥23 才取 saved）实现，两种长度都能收。
+> **V1.1 长度更正**：本文档 V1.0 曾把 payload 标为 26 B、追加 `saved` 后 27 B——那是算术错误（`i32×4` 是 16 B 不是 20 B）。**字段偏移从未变过，线上布局以本表为准**；tc275_car 34 §3.1/§9.1.1/§9.4 与 doc/22 已同步改订。TC275 侧首版按 27 B 实施时踩到同一坑（`payload[22..25]` 未赋值随帧发出、C6 读到脏 `saved`），现已改为 23 B / `saved@[22]` 并在其主机单测加了长度不变式。C6 解码本就按字段偏移 + 长度下限（n≥22，n≥23 才取 saved）实现，两种长度都能收。
 
 
-**myCar 侧实施路径**（另行立项，本文档只给契约）：CPU1 标定结束把结果写入新 xcore 块 `CalibResult`（照 myCar doc/33 §4 规约：lock 访问器 + `XCORE_init` 清零）；CPU0 轮询读到有效结果后 `LINK_send(SF_TYPE_EVT, 0x22, …)` 一次性发送并清标志。
+**tc275_car 侧实施路径**（另行立项，本文档只给契约）：CPU1 标定结束把结果写入新 xcore 块 `CalibResult`（照 tc275_car doc/33 §4 规约：lock 访问器 + `XCORE_init` 清零）；CPU0 轮询读到有效结果后 `LINK_send(SF_TYPE_EVT, 0x22, …)` 一次性发送并清标志。
 
 ### 4.2 C6 侧解码与 WS 事件
 
@@ -152,8 +152,8 @@ idle → confirm(二次确认弹窗) → sending(发1帧) → running(1.4s+余�
 
 ### 4.3 回归与测试
 
-- c6_car `test/host` 的 proto 用例补 `0x70` 触发帧与 `"cal"` 事件解析用例，保持全绿；
-- myCar 侧合入时同步更新 `test/host/test_sf*`（SF 层改动必跑主机单测，myCar doc/33 §7）。
+- esp32c6_car `test/host` 的 proto 用例补 `0x70` 触发帧与 `"cal"` 事件解析用例，保持全绿；
+- tc275_car 侧合入时同步更新 `test/host/test_sf*`（SF 层改动必跑主机单测，tc275_car doc/33 §7）。
 
 ---
 
@@ -167,7 +167,7 @@ idle → confirm(二次确认弹窗) → sending(发1帧) → running(1.4s+余�
 4. `running` 窗口内本页驾驶发送被抑制、STOP 可用；
 5. 控制页回归：驾驶、车速表、里程、配对、OTA 全部不受影响。
 
-**M2（myCar 固件合入后）：**
+**M2（tc275_car 固件合入后）：**
 
 6. 标定完成后 1s 内结果表填充，`invert/delta` 与串口 `ENCCAL=` 行数值一致；delta=0 行标红；
 7. 急停中止场景（标定中发 0x32）页面显示"中止"而非超时。
@@ -180,10 +180,10 @@ idle → confirm(二次确认弹窗) → sending(发1帧) → running(1.4s+余�
 
 | 任务 | 仓库 | 内容 | 依赖 |
 |---|---|---|---|
-| M1 | c6_car | calib.html/js + 控制页入口 + 互锁/进度/降级文案 | 无 |
-| M2a | myCar | `SF_CID_DPT_RESULT(0x22)` 帧常量 + xcore CalibResult 块 + CPU0 发送 + 主机单测 | 无（可与 M1 并行） |
-| M2b | c6_car | EVT 0x22 解码 + `"cal"` 事件 + 结果表 | M2a |
-| M3 | myCar | ENCCAL 符号 bake 进 `g_encInvert` 默认值（台架确认后）+ 文档同步（23 §8.4、21 §5.2） | 台架跑 M1 |
+| M1 | esp32c6_car | calib.html/js + 控制页入口 + 互锁/进度/降级文案 | 无 |
+| M2a | tc275_car | `SF_CID_DPT_RESULT(0x22)` 帧常量 + xcore CalibResult 块 + CPU0 发送 + 主机单测 | 无（可与 M1 并行） |
+| M2b | esp32c6_car | EVT 0x22 解码 + `"cal"` 事件 + 结果表 | M2a |
+| M3 | tc275_car | ENCCAL 符号 bake 进 `g_encInvert` 默认值（台架确认后）+ 文档同步（23 §8.4、21 §5.2） | 台架跑 M1 |
 
 ---
 
@@ -191,8 +191,8 @@ idle → confirm(二次确认弹窗) → sending(发1帧) → running(1.4s+余�
 
 ### 7.1 文件锚点
 
-- c6_car：`assets_src/index.html:62-86`（ctl 行与维护区）、`assets_src/app.js:6/21/173-205`（CMD 表/buildFrame/摇杆 30Hz）、`components/c6_bridge/bridge.c:153-184`、`components/c6_link/link.c:286-293`（DPT 映射）、`components/c6_http/ws_sessions.c:194-201`（单 ctrl 降级）
-- myCar：`mw/proto/protocol.h:33`、`mw/proto/protocol.c:110-116`、`com/link.c:243`（CID 白名单）、`rt/motor_algo.c:30-57/183-288`（标定状态机）、`rt/encoder.c:62/327-339`（invert）、`mw/sf/sf_frame.h:60-96`（TYPE/CID 表）、`mw/xcore/xcore.c`（块规约样板）
+- esp32c6_car：`assets_src/index.html:62-86`（ctl 行与维护区）、`assets_src/app.js:6/21/173-205`（CMD 表/buildFrame/摇杆 30Hz）、`components/c6_bridge/bridge.c:153-184`、`components/c6_link/link.c:286-293`（DPT 映射）、`components/c6_http/ws_sessions.c:194-201`（单 ctrl 降级）
+- tc275_car：`mw/proto/protocol.h:33`、`mw/proto/protocol.c:110-116`、`com/link.c:243`（CID 白名单）、`rt/motor_algo.c:30-57/183-288`（标定状态机）、`rt/encoder.c:62/327-339`（invert）、`mw/sf/sf_frame.h:60-96`（TYPE/CID 表）、`mw/xcore/xcore.c`（块规约样板）
 
 ### 7.2 TC275 串口行格式（台架对数用，115200 8N1）
 
@@ -206,7 +206,7 @@ ENCCAL aborted (estop)     ← 急停中止
 
 ### 7.3 判向结果固化（当前工作流，非本任务范围）
 
-ENCCAL 是 RAM 态，**每次上电回到全 +1**。台架确认各轮符号后，把结果手写进 `rt/encoder.c:62` 的 `g_encInvert` 默认值，在 AURIX Development Studio（TASKING）构建烧写；同批更新 doc 23 §8.4 与 21 §5.2（myCar 红线：改行为同批改文档）。
+ENCCAL 是 RAM 态，**每次上电回到全 +1**。台架确认各轮符号后，把结果手写进 `rt/encoder.c:62` 的 `g_encInvert` 默认值，在 AURIX Development Studio（TASKING）构建烧写；同批更新 doc 23 §8.4 与 21 §5.2（tc275_car 红线：改行为同批改文档）。
 
 ### 7.4 给开发 AI 的红线提示
 
@@ -219,14 +219,14 @@ ENCCAL 是 RAM 态，**每次上电回到全 +1**。台架确认各轮符号后�
 
 ## 8 · V1.1 追加需求：逐电机手动控制 · 车辆可视化 · 参数与 DFlash 持久化
 
-**来源**：用户 2026-09-27 追加三项——①标定数据（电机位置、运动方向、算法参数）存 TC275 DFlash；②标定页可逐电机手动控制；③页面显示一辆车、体现 4 个轮子的运动状态。协议追加定义见 §8.4，TC275 侧实施契约为 **myCar doc/34 §8/§9**（同一份协议两端，数值必须逐字节一致）。页面布局在 §2.2 基础上：顶部加车辆视图，原卡片 A/B 之下新增卡片 C（逐电机控制）、卡片 D（参数与存储）。
+**来源**：用户 2026-09-27 追加三项——①标定数据（电机位置、运动方向、算法参数）存 TC275 DFlash；②标定页可逐电机手动控制；③页面显示一辆车、体现 4 个轮子的运动状态。协议追加定义见 §8.4，TC275 侧实施契约为 **tc275_car doc/34 §8/§9**（同一份协议两端，数值必须逐字节一致）。页面布局在 §2.2 基础上：顶部加车辆视图，原卡片 A/B 之下新增卡片 C（逐电机控制）、卡片 D（参数与存储）。
 
 ### 8.1 卡片 C：逐电机手动控制（台架 jog）
 
 - 4 行，按 **REC 的位置映射**显示标签（默认 A 前左 / B 后左 / C 后右 / D 前右），每行两枚**按住即转**按钮 [◀ 反转] [▶ 正转] + 当前 duty 读数；
 - 交互：`pointerdown` 起以 **30 Hz** 发 `0x71 MOTOR_JOG {motor, duty=±500}`（percent*10，±50%，与固件钳位一致），`pointerup/pointerleave` 发一次 `duty=0`；固件侧另有 **300 ms 无刷新自动停**（双层保险）；
 - 互锁：jog 与判向标定互斥（任一进行中另一入口禁用）；jog 期间本页 DRIVE 流抑制；STOP 永远可用（发 `duty=0` + 全部 jog 归零）；
-- TC275 语义：jog 是**开环逐电机驱动**（不过伺服），受故障锁存门禁、不充当心跳、急停立即停（myCar 34 §9.3）。
+- TC275 语义：jog 是**开环逐电机驱动**（不过伺服），受故障锁存门禁、不充当心跳、急停立即停（tc275_car 34 §9.3）。
 - 页面对应门禁（V1.2）：`jogFaultGated()` 只看**新鲜遥测**（`tele.ts` 1 s 内且 `fault != 0`）命中即禁用 8 枚 jog 按钮、③ 步骤标 `bad`、`#car_hint` 换成"⚠ 故障锁存中：车端会拒绝 jog"文案；台架上没跑起来时 `tele` 为空，**不**因缺遥测锁死按钮。门禁跃变在 `animTick` 里边沿触发一次 `refreshFlow()`，不逐帧刷 DOM。
 
 ### 8.2 车辆可视化（4 轮运动状态）
@@ -241,9 +241,9 @@ ENCCAL 是 RAM 态，**每次上电回到全 +1**。台架确认各轮符号后�
 - 进入页面即发 `0x72 REC_GET`，用 EVT `0x23` 渲染**当前生效参数表**：每轮 位置 / 编码器方向（±1，`-1` 标"已翻转"）/ 全局 满量程速度 `fullScaleMmS` / 轮径 `wheelDiaMm` / 数据来源（默认值 · DFlash · 在线设置）；
 - 编辑 `fullScaleMmS`（100..5000）、`wheelDiaMm`（30..200，前端范围校验）→ `0x73 REC_SET` **生效并写入 DFlash**；`0x74 REC_CLEAR` 恢复默认并擦除；
 - `0x70` 自动判向成功后由 TC275 **自动持久化**，UI 无需手动存；EVT `0x22` 追加 `saved u8`（0 未持久化 / 1 已写 / 2 写失败），结果表显示保存状态；
-- "运动方向"指**编码器计数方向 invert**（0x70 判向结果，生效项）；电机驱动方向属接线级事实（myCar `g_dirInvert` 编译期表），**不在本协议字段范围**，页面不显示、不下发。
+- "运动方向"指**编码器计数方向 invert**（0x70 判向结果，生效项）；电机驱动方向属接线级事实（tc275_car `g_dirInvert` 编译期表），**不在本协议字段范围**，页面不显示、不下发。
 
-### 8.4 协议追加（与 myCar 34 §9 同源；既有 0x70 通路与 c6_link 映射零改动）
+### 8.4 协议追加（与 tc275_car 34 §9 同源；既有 0x70 通路与 c6_link 映射零改动）
 
 DPT 命令族（SF `CMD` / `CID_DPT`，`payload[0]=op`；c6_link 现有 0x70~0x79 映射已覆盖，**不改 c6_link**）：
 
@@ -255,9 +255,9 @@ DPT 命令族（SF `CMD` / `CID_DPT`，`payload[0]=op`；c6_link 现有 0x70~0x7
 | 0x73 | REC_SET | `{pos u8×4, invert i8×4, fullScale i16, wheelDia i16}`（12 B） | EVT 0x23（生效+持久化回执） |
 | 0x74 | REC_CLEAR | ∅ | EVT 0x23（默认值回执） |
 
-> 0x71/0x73 载荷偏移已与 myCar 实码逐字节核对：jog `{motor@0, duty i16LE@1..2}`（`calib_record.c:CALIBREC_jogDecode`，钳 ±500、`motor<4` 校验）；REC_SET `{pos@0..3, invert@4..7, fullScale i16LE@8..9, wheelDia i16LE@10..11}`（`CALIBREC_recSetDecode`，`len != 12` 直接拒收，`ver` 由固件置 1、`src` 由固件置 2，**不在线上载荷里**）。
+> 0x71/0x73 载荷偏移已与 tc275_car 实码逐字节核对：jog `{motor@0, duty i16LE@1..2}`（`calib_record.c:CALIBREC_jogDecode`，钳 ±500、`motor<4` 校验）；REC_SET `{pos@0..3, invert@4..7, fullScale i16LE@8..9, wheelDia i16LE@10..11}`（`CALIBREC_recSetDecode`，`len != 12` 直接拒收，`ver` 由固件置 1、`src` 由固件置 2，**不在线上载荷里**）。
 
-新增事件帧：**EVT `SF_CID_DPT_REC = 0x23`**，payload **15 B**，逐字节（已与 myCar `mw/calib/calib_record.c:buildEvtRec` 实码核对一致）：
+新增事件帧：**EVT `SF_CID_DPT_REC = 0x23`**，payload **15 B**，逐字节（已与 tc275_car `mw/calib/calib_record.c:buildEvtRec` 实码核对一致）：
 
 | 偏移 | 字段 | 类型 |
 |---|---|---|
@@ -275,8 +275,8 @@ c6 侧改动点：`c6_link` 不改；JSON 事件流新增/扩展（`"cal"` 扩�
 
 | 任务 | 仓库 | 内容 |
 |---|---|---|
-| M3' | myCar | DFlash 持久化 + CalibRecord + 参数运行时化（34 §8） |
-| M4 | c6+myCar | MOTOR_JOG 逐电机控制（本节 8.1 + 34 §9.3） |
+| M3' | tc275_car | DFlash 持久化 + CalibRecord + 参数运行时化（34 §8） |
+| M4 | c6+tc275_car | MOTOR_JOG 逐电机控制（本节 8.1 + 34 §9.3） |
 | M5 | c6 | 车辆可视化 + 参数卡片（8.2/8.3） |
 
 **AC 追加（编号接 §5）：**

@@ -11,7 +11,7 @@
 | 门 | 内容 | 通过标准 | 状态 | 结果 |
 |---|---|---|---|---|
 | G1 | 主机单测 | 全绿，proto/SF 100% 分支 | ✅ | 33/33（见 §2） |
-| G2 | 目标编译 | 0 error / 自研组件 0 新增 warning | ✅ | `idf.py build` exit=0，`c6_car.bin` 1,072,624 B |
+| G2 | 目标编译 | 0 error / 自研组件 0 新增 warning | ✅ | `idf.py build` exit=0，`esp32c6_car.bin` 1,072,624 B |
 | G3 | 静态走查 | 无回调内耗时/无未校验 memcpy/ISR 禁锁 | ✅ | 随编码完成；本轮文档梳理另修 2 缺陷（07 文档 §8） |
 | G4 | HIL 台架 | LLDD §9 集成/压力/老化 | 🔴 | 未开始（需双板台架） |
 
@@ -33,7 +33,7 @@ RFC 8032 向量 1（空消息）· 向量 2（0x72）· dev 密钥端到端（to
 ### test_bundle（6 项）
 真实签名头逐字节流 · 坏 magic · 坏签名 · 错公钥 · 尺寸不符 · 截断检测
 
-### test_sf（7 项，SF 帧 = SPI 链路容器，myCar doc 22 §5）
+### test_sf（7 项，SF 帧 = SPI 链路容器，tc275_car doc 22 §5）
 编解码回环 · 段内多帧 + 4B 补零 · 错误分支（CRC/VER/LEN 越界/垃圾再同步）·
 SEQ 严格前进窗口（1..32 含回绕）· 10⁷ 随机字节模糊 · v2↔SF 映射回环
 （DRIVE/LINK_STATE/未映射命令）· OTA CHUNK 242B 帧布局（4B 对齐）
@@ -69,10 +69,10 @@ SEQ 严格前进窗口（1..32 含回绕）· 10⁷ 随机字节模糊 · v2↔S
 
 ```bash
 # G1（任意 C99 编译器；MSYS2 mingw64 gcc 实测通过）
-cd c6_car/test/host && make check
+cd esp32c6_car/test/host && make check
 
 # G2（ESP-IDF v6.1-beta1）
-cd c6_car && idf.py build
+cd esp32c6_car && idf.py build
 ```
 
 ## 6. 台架弱电源缓解（真机 bring-up 记录，2026-09）
@@ -86,7 +86,7 @@ ESP32-C6 最低欠压阈值（SEL_7 = 2.51 V）以下，触发 brownout 复位�
 | `C6_BENCH_BOD_DISABLE` | n | app_main 最早处调用 `esp_brownout_disable()`（闪写/RF 校准脱离保证电压窗口，仅台架） |
 | `C6_NET_START_DELAY_MS` | 0 | Wi-Fi 启动前延时，让电源从开机浪涌恢复（台架取 300） |
 | `C6_WIFI_TX_POWER_QDBM` | 0 | 封顶 TX 功率压低 PA 电流峰，0.25 dBm 单位（台架取 48 = 12 dBm） |
-| `C6_BENCH_CTRL` | n | 控制旁路（台架取 y）：①所有 WS 会话免配对直接提升 CTRL——myCar 尚无 PAIR 通道消费者，token 流程永远无法完成；②v2 0x50 DRIVE 在 `c6_link` 内翻译为 0x10 SET_SPEED `{left,right}%`（600 mm/s/300 deg/s ≙ ±100%，ω>0=左转）——myCar 旧构建对 0x50 计 `cmdUnsupportedOp` 丢弃；③bridge 在链路在线时每 60 ms 注入 0x21 HEARTBEAT——CPU0 100 ms 无心跳即清零轮速，而页面按 21 §6.2 依赖 0x50 兼作心跳。生产构建必须保持 n（myCar 落地 0x50 消费后此开关可退役） |
+| `C6_BENCH_CTRL` | n | 控制旁路（台架取 y）：①所有 WS 会话免配对直接提升 CTRL——tc275_car 尚无 PAIR 通道消费者，token 流程永远无法完成；②v2 0x50 DRIVE 在 `c6_link` 内翻译为 0x10 SET_SPEED `{left,right}%`（600 mm/s/300 deg/s ≙ ±100%，ω>0=左转）——tc275_car 旧构建对 0x50 计 `cmdUnsupportedOp` 丢弃；③bridge 在链路在线时每 60 ms 注入 0x21 HEARTBEAT——CPU0 100 ms 无心跳即清零轮速，而页面按 21 §6.2 依赖 0x50 兼作心跳。生产构建必须保持 n（tc275_car 落地 0x50 消费后此开关可退役） |
 
 注意：ESP32-C6 的欠压阈值阶梯是**降序**的（SEL_7 = 2.51 V 最低，
 SEL_2 = 3.27 V 最高），`sdkconfig.defaults` 中不要写 `..._SEL_2_5V`

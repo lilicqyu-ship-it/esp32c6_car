@@ -8,7 +8,7 @@ Bundle layout (components/c6_ota/bundle.c parses this; all fields LE):
     payload: c6.bin [+ assets.bin]
 
 Usage:
-    python tools/sign_bundle.py --c6 build/c6_car.bin \
+    python tools/sign_bundle.py --c6 build/esp32c6_car.bin \
         [--assets build/assets.bin] \
         [--seed-file tools/keys/ed25519_dev.seed] \
         --out build/c6fw.bundle

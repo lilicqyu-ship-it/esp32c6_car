@@ -5,7 +5,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(c6_car)
+project(esp32c6_car)
 
 # ---- control page bundle: assets_src/* -> build/assets.bin ------------------------
 # packed automatically as part of `idf.py build` (incremental: only re-runs when

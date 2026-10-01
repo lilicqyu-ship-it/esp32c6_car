@@ -5,9 +5,9 @@
 
 /* ---- proto v2 constants (mirror components/c6_proto) ---- */
 const P_SYNC1 = 0xAA, P_SYNC2 = 0x55, P_VER = 0x02;
-/* DPT 命令族（doc/17 §8.4）。字节 0x70 双语义：c6_car 侧叫 PROTO_CMD_DPT_ENTER
- * （components/c6_proto/proto_frames.h:78），myCar 侧叫 PROTO_CMD_DPT_CAL_DIR
- * （mw/proto/protocol.h:33）——对 myCar main 基线的实际语义是编码器判向标定。
+/* DPT 命令族（doc/17 §8.4）。字节 0x70 双语义：esp32c6_car 侧叫 PROTO_CMD_DPT_ENTER
+ * （components/c6_proto/proto_frames.h:78），tc275_car 侧叫 PROTO_CMD_DPT_CAL_DIR
+ * （mw/proto/protocol.h:33）——对 tc275_car main 基线的实际语义是编码器判向标定。
  * 0x70 不是心跳，不能当驾驶保活用；0x75~0x79 TC275 侧未实现，本页禁止发送。 */
 const CMD = { DRIVE: 0x50, TELEMETRY: 0x41,
               CAL_DIR: 0x70, MOTOR_JOG: 0x71, REC_GET: 0x72, REC_SET: 0x73, REC_CLEAR: 0x74 };
@@ -229,7 +229,7 @@ function calibEnd() {
 function calibTimeout() {                           /* 无结果回传时的降级（doc/17 §2.4） */
   calibEnd();
   $("calib_msg").textContent =
-    "结果回传未启用（需 myCar 固件 M2/M3'）：请在 TC275 调试串口查看 ENCCAL= 行（invert[0..3] delta[0..3]）。";
+    "结果回传未启用（需 tc275_car 固件 M2/M3'）：请在 TC275 调试串口查看 ENCCAL= 行（invert[0..3] delta[0..3]）。";
 }
 function calibAbortOnDisconnect() {
   if (!state.running) return;

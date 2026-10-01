@@ -1,10 +1,10 @@
-menu "C6 LINK (SPI slave to TC275, myCar doc 22)"
+menu "C6 LINK (SPI slave to TC275, tc275_car doc 22)"
 
     config C6_LINK_SPI_SCLK_GPIO
         int "LINK SPI SCLK GPIO (from TC275 P33.11)"
         default 19
         help
-            Wiring is the single source of truth: myCar 23-wiring.md §9.1
+            Wiring is the single source of truth: tc275_car 23-wiring.md §9.1
             (X1-3 P33.11 SCLK -> J3-9 GPIO19).
 
     config C6_LINK_SPI_MOSI_GPIO

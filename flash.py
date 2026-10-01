@@ -32,7 +32,7 @@ from pathlib import Path
 PROJECT = Path(__file__).resolve().parent
 BUILD = PROJECT / "build"
 BAUD = 460800
-CHIP = "esp32c6"  # this helper is c6_car-specific
+CHIP = "esp32c6"  # this helper is esp32c6_car-specific
 
 # Port auto-detection: the board's built-in USB-Serial-JTAG reports
 # Espressif's VID; external USB-UART bridges get a second-chance match.
@@ -249,8 +249,8 @@ def flash_full(port):
     offset/image pairs with build-relative paths, hence cwd=BUILD.
     """
     py, _, _ = find_idf_env()
-    if not (BUILD / "c6_car.bin").exists():
-        sys.exit("build/c6_car.bin missing - run `python flash.py build` first "
+    if not (BUILD / "esp32c6_car.bin").exists():
+        sys.exit("build/esp32c6_car.bin missing - run `python flash.py build` first "
                  "or pass -b")
     ensure_port_free(port)
     run([py, "-m", "esptool", "--chip", CHIP, "-p", port, "-b", BAUD,
@@ -295,7 +295,7 @@ def common_opts(f):
              context_settings={"help_option_names": ["-h", "--help"]})
 @click.pass_context
 def cli(ctx):
-    """ESP32-C6 flashing helper (c6_car).  No BOOT button needed - the board
+    """ESP32-C6 flashing helper (esp32c6_car).  No BOOT button needed - the board
     auto-resets into download mode and again after flashing."""
     if ctx.invoked_subcommand is None:
         ctx.invoke(full)
@@ -314,7 +314,7 @@ def full(port, monitor, build):
     """Flash bootloader + partition table + otadata + firmware."""
     port = resolve_port(port)
     print(f"[c6] mode=full port={port}")
-    if build or not (BUILD / "c6_car.bin").exists():
+    if build or not (BUILD / "esp32c6_car.bin").exists():
         run_build()
     flash_full(port)
     if monitor:
@@ -339,7 +339,7 @@ def all_cmd(port, monitor, build):
     port = resolve_port(port)
     print(f"[c6] mode=all port={port}")
     flash_assets(port)
-    if build or not (BUILD / "c6_car.bin").exists():
+    if build or not (BUILD / "esp32c6_car.bin").exists():
         run_build()
     flash_full(port)
     if monitor:
