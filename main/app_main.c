@@ -184,6 +184,7 @@ void app_main(void)
         ws_on_binary(on_ws_binary);
         http_on_session_change(bridge_notify_clients);
         http_set_diag_provider(app_diag_render);
+        http_on_tcver_request(bridge_request_tcver);
     }
 
     /* 6. AP station counting also feeds 0x42 LINK_STATE */

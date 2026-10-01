@@ -39,6 +39,11 @@ void bridge_notify_pair(void);
 /* LINK TX path shared with c6_pair (registered via pair_set_output). */
 void bridge_send_frame(const proto_frame_t *f);
 
+/* On-demand TC275 version query: DIAG 0x53 sub 0x24 over SPI (C6 queues it,
+ * the IRQ line tells the TC275 master to read it).  The TC275 answers with
+ * EVT 0x24/0x25 -> {"t":"tcver"} broadcast.  Rate-limited, no-op if link down. */
+void bridge_request_tcver(void);
+
 /* Latest telemetry snapshot for first-screen / diag (NULL before first 0x41). */
 const proto_telemetry_t *bridge_telemetry_snapshot(void);
 

@@ -4,6 +4,11 @@
 # CMakeLists in this exact order for cmake to work correctly
 cmake_minimum_required(VERSION 3.16)
 
+# Plain SemVer for esp_app_get_description()->version (hello.ver, /api/health,
+# S3 SYSTEM page).  Without it IDF falls back to `git describe`, which leaks
+# "-<n>-g<hash>[-dirty]" into the UI.  Bump this on each release.
+set(PROJECT_VER "0.1.3")
+
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(esp32c6_car)
 

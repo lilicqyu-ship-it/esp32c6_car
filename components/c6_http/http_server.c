@@ -35,6 +35,7 @@ typedef struct
     httpd_handle_t      hd;
     ws_bin_cb_t         bin_cb;
     http_diag_fn        diag_fn;
+    void              (*tcver_cb)(void);      /* {"t":"tcver"} request -> bridge */
     http_upload_sink_t  sink_c6;
     http_upload_sink_t  sink_tc;
     bool                have_c6;
@@ -422,6 +423,15 @@ static esp_err_t ws_handler(httpd_req_t *req)
             if (strncmp((const char *)pkt.payload, "{\"t\":\"ping\"}", 13u) == 0)
             {
                 (void)ws_send_ctl(fd, "{\"t\":\"pong\"}");
+            }
+            else if (strncmp((const char *)pkt.payload, "{\"t\":\"tcver\"}", 13u) == 0)
+            {
+                /* on-demand TC275 version: the bridge sends DIAG 0x53/0x24 down
+                 * the SPI link; the reply returns as the usual tcver broadcast */
+                if (s_http.tcver_cb != NULL)
+                {
+                    s_http.tcver_cb();
+                }
             }
             break;
         }
@@ -1001,6 +1011,11 @@ void http_register_upload_sink(const char *uri, const http_upload_sink_t *s)
 void http_set_diag_provider(http_diag_fn fn)
 {
     s_http.diag_fn = fn;
+}
+
+void http_on_tcver_request(void (*cb)(void))
+{
+    s_http.tcver_cb = cb;
 }
 
 /* Wildcard catch-all for phone connectivity probes (/hotspot-detect.html,

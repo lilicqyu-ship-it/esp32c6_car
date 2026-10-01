@@ -195,6 +195,29 @@ void bridge_send_frame(const proto_frame_t *f)
     (void)link_send(f);
 }
 
+#define TCVER_REQ_MIN_MS  200u   /* a tap storm from several clients = 1 query */
+
+void bridge_request_tcver(void)
+{
+    static int64_t s_last_ms = -1000;
+    int64_t now = esp_timer_get_time() / 1000;
+    proto_frame_t f;
+
+    if (!link_is_up() || ((now - s_last_ms) < (int64_t)TCVER_REQ_MIN_MS))
+    {
+        return;
+    }
+    s_last_ms = now;
+    memset(&f, 0, sizeof(f));
+    f.ver = PROTO_VER;
+    f.cmd = PROTO_CMD_DIAG;          /* -> SF CMD / CID_DIAG {0x53, 0x24} */
+    f.seq = 0u;
+    f.len = 1u;
+    f.data[0] = 0x24u;               /* tc275 PROTO_DIAG_SUB_VER_REQ */
+    esp_err_t rc = link_send(&f);
+    ESP_LOGI(TAG, "tcver request -> TC275 (%s)", esp_err_to_name(rc));
+}
+
 /* ---- relay pump internals ------------------------------------------------------
  * All relay_* state (incl. the resend ring) is touched under relay_mtx.
  * Lock order: relay_mtx -> link tx_mtx (never the reverse).  The 2 s credit

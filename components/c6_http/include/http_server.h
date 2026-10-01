@@ -47,6 +47,8 @@ void http_broadcast_ctl(const char *json);
 void http_on_session_change(void (*cb)(void));           /* -> LINK_STATE   */
 void http_register_upload_sink(const char *uri, const http_upload_sink_t *s);
 void http_set_diag_provider(http_diag_fn fn);
+/* {"t":"tcver"} text from any WS client -> cb (bridge_request_tcver). */
+void http_on_tcver_request(void (*cb)(void));
 
 /* JSON helper shared by handlers: true when the socket owns CTRL. */
 bool http_sd_is_ctrl(int sd);
