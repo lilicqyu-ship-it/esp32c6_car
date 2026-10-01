@@ -69,6 +69,10 @@ extern "C" {
                                         {op u8, status u8, invert i8x4,
                                          delta i32x4 LE, saved u8}           */
 #define SF_CID_DPT_REC       0x23u   /* DPT record (doc/17 §8.4), 15B:
+/* Version beacons, TC275 -> C6 -> S3 ({"t":"tcver"} JSON in c6_bridge). 24 B
+ * NUL-terminated strings; SBL slot all-zero when the SBL is absent. */
+#define SF_CID_EVT_APP_VER    0x24u   /* TYPE_EVT, 24 B "APPFW tc275_car vX.Y.Z" */
+#define SF_CID_EVT_SBL_VER    0x25u   /* TYPE_EVT, 24 B "SBLFW tc275_sbl vX.Y.Z" */
                                         {ver u8, src u8, pos u8x4,
                                          invert i8x4, fullScale i16,
                                          wheelDia i16, crcOk u8} LE          */

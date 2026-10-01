@@ -609,6 +609,36 @@ static void broadcast_telemetry(void)
 #define DIAG_SUB_DPT_RESULT   0x22u   /* cal: {op, status, invert i8x4, delta i32x4 LE, saved} */
 #define DIAG_SUB_DPT_REC      0x23u   /* rec: {ver, src, pos u8x4, invert i8x4,
                                          fullScale i16, wheelDia i16, crcOk} LE (doc/17 §8.4)  */
+#define DIAG_SUB_EVT_APP_VER  0x24u   /* tcver: 24 B "APPFW tc275_car vX.Y.Z"   */
+#define DIAG_SUB_EVT_SBL_VER  0x25u   /* tcver: 24 B "SBLFW tc275_sbl vX.Y.Z", all-zero = absent */
+
+/* --- TC275 version beacon (SF EVT 0x24/0x25 via the DIAG tunnel) ---------- */
+/* TC275 pushes both strings at link start and every 5 s; the bridge caches the
+ * latest of each and rebroadcasts the merged JSON whenever one arrives, so a
+ * freshly connected remote catches up without polling. */
+static char s_tc_app_ver[25];     /* "APPFW tc275_car vX.Y.Z" */
+static char s_tc_sbl_ver[25];     /* "SBLFW tc275_sbl vX.Y.Z" or "" */
+
+static void bridge_tcver_broadcast(void)
+{
+    char json[96];
+    (void)snprintf(json, sizeof(json),
+                   "{\"t\":\"tcver\",\"app\":\"%s\",\"sbl\":\"%s\"}",
+                   s_tc_app_ver, s_tc_sbl_ver);
+    http_broadcast_ctl(json);
+}
+
+static void bridge_emit_tcver(uint8_t sub, const uint8_t *p, uint16_t n)
+{
+    char *dst = (sub == DIAG_SUB_EVT_APP_VER) ? s_tc_app_ver : s_tc_sbl_ver;
+    uint16_t copy = (n < 24u) ? n : 24u;
+
+    memset(dst, 0, 25);
+    for (uint16_t i = 0; i < copy && p[i] != 0u; i++) {
+        dst[i] = (char)p[i];
+    }
+    bridge_tcver_broadcast();
+}
 
 /* EVT 0x22 -> {"t":"cal","status":n,"saved":n,"invert":[..],"delta":[..]}.
  * p points past the sub-op byte. Base record is 22B (op+status+invert4+delta16);
@@ -712,6 +742,10 @@ static void pump_link_frame(const proto_frame_t *f)
                 else if (sub == DIAG_SUB_DPT_REC)
                 {
                     bridge_emit_rec(p, n);
+                }
+                else if (sub == DIAG_SUB_EVT_APP_VER || sub == DIAG_SUB_EVT_SBL_VER)
+                {
+                    bridge_emit_tcver(sub, p, n);
                 }
                 else
                 {
