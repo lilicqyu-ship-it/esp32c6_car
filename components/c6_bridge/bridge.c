@@ -205,8 +205,6 @@ void bridge_request_tcver(void)
 
     if (!link_is_up() || ((now - s_last_ms) < (int64_t)TCVER_REQ_MIN_MS))
     {
-        ESP_LOGW(TAG, "tcver request dropped (link_up=%d, since_last=%lld ms)",
-                 link_is_up(), (long long)(now - s_last_ms));
         return;
     }
     s_last_ms = now;
@@ -216,8 +214,10 @@ void bridge_request_tcver(void)
     f.seq = 0u;
     f.len = 1u;
     f.data[0] = 0x24u;               /* tc275 PROTO_DIAG_SUB_VER_REQ */
-    esp_err_t rc = link_send(&f);
-    ESP_LOGI(TAG, "tcver request -> TC275 (%s)", esp_err_to_name(rc));
+    if (link_send(&f) != ESP_OK)
+    {
+        ESP_LOGW(TAG, "tcver request not queued");
+    }
 }
 
 /* ---- relay pump internals ------------------------------------------------------

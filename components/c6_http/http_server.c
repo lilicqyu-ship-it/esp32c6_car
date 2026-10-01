@@ -427,11 +427,6 @@ static esp_err_t ws_handler(httpd_req_t *req)
         case HTTPD_WS_TYPE_TEXT:
         {
             pkt.payload[pkt.len] = '\0';
-            if (strstr((const char *)pkt.payload, "tcver") != NULL)
-            {
-                ESP_LOGI(TAG, "ws text fd=%d len=%u: %s", fd, (unsigned)pkt.len,
-                         (const char *)pkt.payload);
-            }
             if (strncmp((const char *)pkt.payload, "{\"t\":\"ping\"}", 13u) == 0)
             {
                 (void)ws_send_ctl(fd, "{\"t\":\"pong\"}");
