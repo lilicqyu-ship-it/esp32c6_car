@@ -1,5 +1,7 @@
 # esp32c6_car — SmartDrive ESP32-C6 网络协处理器固件
 
+[![CI](https://github.com/lilicqyu-ship-it/esp32c6_car/actions/workflows/ci.yml/badge.svg)](https://github.com/lilicqyu-ship-it/esp32c6_car/actions/workflows/ci.yml) [![version](https://img.shields.io/github/v/tag/lilicqyu-ship-it/esp32c6_car?label=version&sort=semver)](https://github.com/lilicqyu-ship-it/esp32c6_car/releases)
+
 softAP + WebSocket + 配对 + 双板 OTA 中继的 C6 侧固件（proto v2、CRC16、安全性裁决全部在 TC275）。
 控制端两类客户端，协议面完全一致、零区分对待：手机 Web 控制页（`assets_src/`，烧入 assets 分区）
 与 ESP32-S3 LCD 遥控器（平级仓库 [`../smartcar_remote`](../smartcar_remote)，2026-09-29 起，
