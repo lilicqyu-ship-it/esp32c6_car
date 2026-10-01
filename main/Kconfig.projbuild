@@ -80,4 +80,17 @@ menu "esp32c6_car project"
             window.  The user opens the page manually by typing the address
             (http://192.168.4.1/ or http://mycar.local/ via mDNS).
 
+    config C6_OTA_NO_AUTH
+        bool "OTA endpoints without pair token (bench/dev)"
+        default y
+        help
+            When enabled (y): POST /ota/c6 and /ota/tc275 skip the control
+            token check, so fw.py / bench tools push firmware without the
+            button-window pairing dance.  Safe for the bench because every
+            bundle is still ed25519-verified on-target before any flash
+            write; unauthenticated pushes can only be rejected garbage.
+
+            Production MUST set this to n: the token gate is what keeps an
+            unauthenticated WLAN peer from queuing images at will.
+
 endmenu

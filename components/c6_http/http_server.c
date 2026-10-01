@@ -762,20 +762,26 @@ static esp_err_t ota_upload_handler(httpd_req_t *req)
     const http_upload_sink_t *sink = self ? &s_http.sink_c6 : &s_http.sink_tc;
     const bool have = self ? s_http.have_c6 : s_http.have_tc;
     int fd = httpd_req_to_sockfd(req);
-    char token[80];
     char json[192];
     uint8_t *chunk;
     esp_err_t err;
+#if !CONFIG_C6_OTA_NO_AUTH
+    char token[80];
+#endif
 
     if (!have)
     {
         return send_json(req, 503, "{\"ok\":false,\"e\":\"ota not ready\"}");
     }
-    /* control端 token 必须 (LLDD 3.2) */
+#if !CONFIG_C6_OTA_NO_AUTH
+    /* control端 token 必须 (LLDD 3.2)。台架把 C6_OTA_NO_AUTH 置 y 时跳过：
+     * 包本身在目标侧 ed25519 验签通过才碰 flash，未授权推送只能送进来一堆
+     * 会被拒签的垃圾；量产必须关掉本开关恢复 token 门。 */
     if (!get_request_token(req, token, sizeof(token)) || !pair_token_ok(token))
     {
         return send_json(req, 401, "{\"ok\":false,\"e\":\"auth\"}");
     }
+#endif
 
     size_t remaining = req->content_len;
     if (remaining > OTA_TOTAL_MAX)
