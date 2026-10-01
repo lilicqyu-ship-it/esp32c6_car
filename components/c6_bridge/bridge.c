@@ -78,6 +78,7 @@ typedef struct
     uint8_t  last_link_state_sent;
     bool     tc_on_sent;                     /* last "car online" pushed to page */
     bool     tc_on_valid;                    /* false until the first push       */
+    bool     mbox_any;                       /* ever received: snapshot valid    */
 } bridge_ctx_t;
 
 static bridge_ctx_t s_br;
@@ -145,7 +146,7 @@ bool bridge_link_up(void)
 
 const proto_telemetry_t *bridge_telemetry_snapshot(void)
 {
-    return s_br.mbox_fresh ? &s_br.mbox : NULL;
+    return s_br.mbox_any ? &s_br.mbox : NULL;
 }
 
 /* ---- producers ---------------------------------------------------------------*/
@@ -599,6 +600,7 @@ static void pump_telemetry_frame(const proto_frame_t *f)
         {
             s_br.mbox       = t;
             s_br.mbox_fresh = true;
+            s_br.mbox_any   = true;
             s_br.car_state  = t.state;
             s_br.fault_code = t.fault_code;
             (void)xSemaphoreGive(s_br.mbox_mtx);
@@ -606,6 +608,12 @@ static void pump_telemetry_frame(const proto_frame_t *f)
     }
 }
 
+/* Each SPI telemetry frame is forwarded to the WS clients exactly once: the
+ * flag is consumed here, so a frame that never arrived is never replayed.
+ * The old unconditional replay kept re-sending the last cache at 50 Hz after
+ * the TC275 powered off, which fed every client's freshness watchdog forever
+ * - the page (and the S3 About topology) showed the car ONLINE while it was
+ * dead, and the S3's E2E loss/rate accounting counted the duplicates. */
 static void broadcast_telemetry(void)
 {
     proto_frame_t f;
@@ -618,6 +626,7 @@ static void broadcast_telemetry(void)
     {
         return;
     }
+    s_br.mbox_fresh = false;
     f.ver = PROTO_VER;
     f.cmd = PROTO_CMD_TELEMETRY;              /* page decodes payload */
     f.seq = 0u;
